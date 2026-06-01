@@ -403,27 +403,36 @@ def build_road_markings(gdf):
         rdln = int(row.get('rdln') or 1)
         rvwd = float(row.get('rvwd') or 0)
 
+        # 1차로 왕복(골목 등)은 중앙선 없음
+        if rdln < 2:
+            continue
+
         # 중앙선 (황색)
         m = _line_to_marking_mesh(geom, 0.30, (1.0, 0.9, 0.0))
         if m:
             meshes.append(m)
 
-        # 내부 차선 (흰색) — 왕복 rdln>2 일 때 양쪽에 생성
-        if rdln > 2 and rvwd > 0:
+        # 내부 차선 (흰색) — 편도 2차로 이상일 때 양쪽에 생성
+        # rdln = 총 차선수, 편도 차선 = rdln // 2
+        # 내부 구분선 개수 = 편도차선 - 1
+        lanes_per_dir = rdln // 2
+        if lanes_per_dir >= 2 and rvwd > 0:
             lane_w = rvwd / rdln
-            lanes_per_dir = rdln // 2
+            lines = (list(geom.geoms)
+                     if hasattr(geom, 'geoms') else [geom])
             for k in range(1, lanes_per_dir):
                 dist = lane_w * k
                 for side in ('left', 'right'):
-                    try:
-                        offset_geom = geom.parallel_offset(dist, side)
-                        if offset_geom.is_empty:
-                            continue
-                        m = _line_to_marking_mesh(
-                            offset_geom, 0.20, (1.0, 1.0, 1.0)
-                        )
-                        if m:
-                            meshes.append(m)
-                    except Exception:
-                        pass
+                    for line in lines:
+                        try:
+                            og = line.parallel_offset(dist, side)
+                            if og is None or og.is_empty:
+                                continue
+                            m = _line_to_marking_mesh(
+                                og, 0.20, (1.0, 1.0, 1.0)
+                            )
+                            if m:
+                                meshes.append(m)
+                        except Exception:
+                            pass
     return meshes
