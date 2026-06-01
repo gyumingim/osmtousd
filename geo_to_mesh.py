@@ -43,24 +43,35 @@ _ROAD_WIDTHS = {
     "busway": 4.0,
 }
 
+# Vworld road_rank → 도로 폭(m): 1=고속 2=국도 3=특별광역시도 4=지방도 5=시군도 6=기타
+_VWORLD_ROAD_WIDTHS = {
+    "1": 12.0, "2": 8.0, "3": 7.0,
+    "4": 6.0,  "5": 4.0, "6": 3.0,
+}
+
 
 def get_building_height(row) -> float:
     h = row.get("height")
-    if h is not None and h == h:  # not NaN
+    if h is not None and h == h:
         try:
-            return float(str(h).replace("m", "").strip())
+            v = float(str(h).replace("m", "").strip())
+            if v > 0:
+                return v
         except ValueError:
             pass
 
-    levels = row.get("building:levels")
+    # OSM: building:levels / Vworld: grnd_flr
+    levels = row.get("building:levels") or row.get("grnd_flr")
     if levels is not None and levels == levels:
         try:
-            return float(str(levels).strip()) * 3.0
+            v = float(str(levels).strip())
+            if v > 0:
+                return v * 3.0
         except ValueError:
             pass
 
     btype = str(row.get("building", "yes"))
-    return _DEFAULT_HEIGHTS.get(btype, 10.0)
+    return _DEFAULT_HEIGHTS.get(btype, 5.0)
 
 
 def _triangulate(polygon: Polygon):
@@ -153,7 +164,6 @@ def polygon_to_mesh_uv(polygon: Polygon, height: float, base_z: float = 0.0,
     points, face_counts, face_indices = result
 
     verts_2d, tris = _triangulate(polygon)
-    n = len(verts_2d)
     v_max = height / floor_h
 
     # Build UV lookup: vertex_index → UV, per face-vertex (faceVarying)
@@ -230,9 +240,19 @@ def get_road_width(highway) -> float:
 def road_to_mesh(row):
     """
     Road edge row -> (points, face_counts, face_indices) or None.
-    Buffers linestring by road width to create a flat polygon mesh.
+    OSM: highway 태그 기준 / Vworld: road_rank + lanes 기준.
     """
-    width = get_road_width(row.get("highway", "residential"))
+    rank = row.get("road_rank")
+    if rank is not None:
+        lanes = row.get("lanes")
+        try:
+            width = float(lanes) * 3.5 if lanes else 0
+        except (ValueError, TypeError):
+            width = 0
+        if width <= 0:
+            width = _VWORLD_ROAD_WIDTHS.get(str(rank), 4.0)
+    else:
+        width = get_road_width(row.get("highway", "residential"))
     geom = row.geometry
     buffered = geom.buffer(width / 2, cap_style=2, join_style=2)
 

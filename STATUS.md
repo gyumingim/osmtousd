@@ -23,6 +23,9 @@ OpenStreetMap 데이터를 USD (Universal Scene Description) 파일로 변환
 - [x] usd_writer.py: USD Stage 생성 (Z-up, metersPerUnit=1)
 - [x] main.py: 전체 파이프라인
 - [x] 출력 검증: busan_univ.usda (597 건물 메쉬 + 2536 도로 메쉬, 28213 lines)
+- [x] csv_loader.py: 경상북도_구미시_신호등_20260331.csv 파싱 (4374개, 타입별 분류)
+- [x] props_generator.py: 신호등 타입별 메쉬 분리 (차량용/보행자용/황색점멸)
+- [x] main.py: CSV 신호등 우선 로드 + 보행자 신호등(type=2) 위치를 횡단보도로 재활용
 
 ## 하고 있는 일
 없음

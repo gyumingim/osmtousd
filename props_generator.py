@@ -29,19 +29,46 @@ def _rect(cx, cy, w, d, angle):
     ])
 
 
+def _vehicle_signal_meshes(x, y):
+    """차량용(1): 폴 2x2x50m + 가로 박스 5x3x8m at 45m."""
+    pole = polygon_to_mesh(_rect(x, y, 2, 2, 0), height=50.0, base_z=0.0)
+    box = polygon_to_mesh(_rect(x, y, 5, 3, 0), height=8.0, base_z=45.0)
+    return [m for m in (pole, box) if m]
+
+
+def _pedestrian_signal_meshes(x, y):
+    """보행자용(2): 폴 1.5x1.5x30m + 세로 박스 2x1.5x6m at 25m."""
+    pole = polygon_to_mesh(_rect(x, y, 1.5, 1.5, 0), height=30.0, base_z=0.0)
+    box = polygon_to_mesh(_rect(x, y, 2, 1.5, 0), height=6.0, base_z=25.0)
+    return [m for m in (pole, box) if m]
+
+
+def _flashing_signal_meshes(x, y):
+    """황색점멸(6): 폴 1.5x1.5x35m + 소형 박스 2.5x2.5x2.5m at 33m."""
+    pole = polygon_to_mesh(_rect(x, y, 1.5, 1.5, 0), height=35.0, base_z=0.0)
+    box = polygon_to_mesh(_rect(x, y, 2.5, 2.5, 0), height=2.5, base_z=33.0)
+    return [m for m in (pole, box) if m]
+
+
 def make_traffic_signal_meshes(coords):
     """
-    (x, y) list -> list of meshes.
-    Each signal: vertical pole (0.2x0.2x4m) + light box (0.5x0.3x1m on top).
+    (x, y) or (x, y, type) list -> list of meshes.
+    type: 1=차량용, 2=보행자용, 6=황색점멸 (없으면 차량용으로 처리)
     """
     meshes = []
-    for x, y in coords:
-        pole = polygon_to_mesh(_rect(x, y, 0.2, 0.2, 0), height=4.0, base_z=0.0)
-        box = polygon_to_mesh(_rect(x, y, 0.5, 0.3, 0), height=1.0, base_z=3.5)
-        if pole:
-            meshes.append(pole)
-        if box:
-            meshes.append(box)
+    for item in coords:
+        if len(item) == 3:
+            x, y, sig_type = item
+        else:
+            x, y = item
+            sig_type = 1
+
+        if sig_type == 2:
+            meshes.extend(_pedestrian_signal_meshes(x, y))
+        elif sig_type == 6:
+            meshes.extend(_flashing_signal_meshes(x, y))
+        else:
+            meshes.extend(_vehicle_signal_meshes(x, y))
     return meshes
 
 

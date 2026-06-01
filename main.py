@@ -1,87 +1,94 @@
 import os
 import pickle
-from shapely.geometry import Polygon, MultiPolygon
+import numpy as np
+from shapely.geometry import Polygon
+from shapely.strtree import STRtree
+from shapely.geometry import Point
 from pyproj import Transformer
 
-from osm_fetch import CENTER, RADIUS, fetch_buildings, fetch_roads, fetch_points
+from osm_fetch import CENTER, RADIUS
+from vworld_loader import load_as_gdf, load_osm_gdf, load_points_data, UTM_CRS
 from geo_to_mesh import building_to_meshes, road_to_mesh, polygon_to_mesh
 from building_generator import generate_missing_buildings
 from props_generator import make_traffic_signal_meshes, make_crossing_meshes
-from vworld_fetch import (
-    fetch_vworld_buildings, to_local_coords, get_vworld_height,
-    fetch_vworld_traffic_signals, fetch_vworld_crossings,
-)
+from csv_loader import load_traffic_signals_csv
 from usd_writer import write_usd
 
-USD_OUTPUT = "busan_univ.usda"
-POINTS_CACHE = "points_cache.pkl"
-VWORLD_CACHE = "vworld_cache.pkl"
+SNAP_THRESHOLD = 80  # 교차로까지 최대 스냅 거리(m)
 
-VWORLD_API_KEY = os.environ.get("VWORLD_KEY", "")
+
+def snap_to_intersections(signal_coords, node_gdf):
+    """
+    각 신호등을 가장 가까운 교차로 노드로 스냅.
+    SNAP_THRESHOLD(m) 초과 시 원래 위치 유지.
+    """
+    if node_gdf is None or len(node_gdf) == 0:
+        return signal_coords
+
+    # 교차로 타입만 사용
+    inter = node_gdf[node_gdf.get("nd_type_h", "").eq("교차로시·종점")
+                     if "nd_type_h" in node_gdf.columns
+                     else node_gdf.index >= 0]
+    if len(inter) == 0:
+        inter = node_gdf
+
+    node_pts = [Point(row.geometry.x, row.geometry.y)
+                for _, row in inter.iterrows()
+                if row.geometry.geom_type == "Point"]
+    if not node_pts:
+        return signal_coords
+
+    tree = STRtree(node_pts)
+    node_xy = np.array([(p.x, p.y) for p in node_pts])
+
+    snapped, moved = [], 0
+    for x, y, sig_type in signal_coords:
+        pt = Point(x, y)
+        idx = tree.nearest(pt)
+        nx, ny = node_xy[idx]
+        dist = ((nx - x) ** 2 + (ny - y) ** 2) ** 0.5
+        if dist <= SNAP_THRESHOLD:
+            snapped.append((nx, ny, sig_type))
+            moved += 1
+        else:
+            snapped.append((x, y, sig_type))
+
+    print(f"  신호등 스냅: {moved}/{len(signal_coords)}개 교차로로 이동")
+    return snapped
+
+USD_OUTPUT = "gumi.usda"
+CSV_SIGNALS_PATH = "경상북도_구미시_신호등_20260331.csv"
+CSV_SIGNALS_CACHE = "csv_signals_cache.pkl"
 
 
 def main():
-    print("=== OSM -> USD conversion ===")
+    print("=== Vworld -> USD conversion ===")
 
-    print("1/4 Downloading OSM data...")
-    buildings_gdf = fetch_buildings()
-    roads_gdf = fetch_roads()
-    print(f"  buildings: {len(buildings_gdf)}, road edges: {len(roads_gdf)}")
+    print("1/4 Vworld 데이터 로드...")
+    buildings_gdf = load_as_gdf("lt_c_bldginfo")
+    roads_gdf = load_as_gdf("lt_l_moctlink")
+    node_gdf = load_as_gdf("lt_p_moctnode")
+    if buildings_gdf is None or roads_gdf is None:
+        print("  [오류] vworld_data/ 파일 없음. 먼저 실행: python3 vworld_fetcher.py")
+        return
+    print(f"  건물: {len(buildings_gdf)}, 도로: {len(roads_gdf)}, "
+          f"교차로 노드: {len(node_gdf) if node_gdf is not None else 0}")
 
-    print("2/4 Loading point features...")
-    if os.path.exists(POINTS_CACHE):
-        with open(POINTS_CACHE, "rb") as f:
-            points_data = pickle.load(f)
-        print(f"  {len(points_data)} categories from cache")
-    else:
-        points_data = fetch_points(utm_crs=buildings_gdf.crs)
-        with open(POINTS_CACHE, "wb") as f:
-            pickle.dump(points_data, f)
-        print(f"  {len(points_data)} categories saved -> {POINTS_CACHE}")
+    print("2/4 Point 피처 로드...")
+    points_data = load_points_data()
+    print(f"  {len(points_data)} 카테고리")
 
-    print("3/4 Generating meshes...")
+    print("3/4 메시 생성...")
     building_meshes = []
     for _, row in buildings_gdf.iterrows():
         building_meshes.extend(building_to_meshes(row))
 
-    vworld_meshes = []
-    vw_gdf = None
-    if os.path.exists(VWORLD_CACHE):
-        print("  Loading Vworld buildings from cache...")
-        with open(VWORLD_CACHE, "rb") as f:
-            vw_gdf = pickle.load(f)
-    elif VWORLD_API_KEY:
-        print("  Fetching Vworld buildings...")
-        vw_gdf = fetch_vworld_buildings(CENTER, RADIUS, VWORLD_API_KEY)
-        if vw_gdf is not None:
-            with open(VWORLD_CACHE, "wb") as f:
-                pickle.dump(vw_gdf, f)
-            print(f"  Saved -> {VWORLD_CACHE}")
-    else:
-        print("  [skip] no cache and VWORLD_KEY not set")
-    if vw_gdf is not None:
-            t = Transformer.from_crs(
-                "EPSG:4326", buildings_gdf.crs, always_xy=True
-            )
-            cx, cy = t.transform(CENTER[1], CENTER[0])
-            vw_local = to_local_coords(vw_gdf, buildings_gdf.crs, cx, cy)
-            for _, row in vw_local.iterrows():
-                geom = row.geometry
-                height = get_vworld_height(row)
-                polys = (
-                    list(geom.geoms) if isinstance(geom, MultiPolygon)
-                    else [geom]
-                )
-                for poly in polys:
-                    if isinstance(poly, Polygon):
-                        mesh = polygon_to_mesh(poly, height)
-                        if mesh:
-                            vworld_meshes.append(mesh)
-            print(f"  Vworld: {len(vworld_meshes)} building meshes")
-    else:
-        print("  [skip] VWORLD_KEY not set -- run: export VWORLD_KEY=your_key")
+    osm_buildings_gdf = load_osm_gdf("buildings")
+    if osm_buildings_gdf is not None:
+        for _, row in osm_buildings_gdf.iterrows():
+            building_meshes.extend(building_to_meshes(row))
+        print(f"  OSM 건물 추가: {len(osm_buildings_gdf)}개")
 
-    print("  Generating buildings for amenity points without polygons...")
     generated_meshes = generate_missing_buildings(
         buildings_gdf, roads_gdf, points_data
     )
@@ -92,31 +99,49 @@ def main():
         if mesh is not None:
             road_meshes.append(mesh)
 
-    # Traffic signals: OSM + Vworld
-    signal_coords = list(points_data.get("traffic_signals", []))
-    if VWORLD_API_KEY:
-        vw_signals = fetch_vworld_traffic_signals(CENTER, RADIUS, VWORLD_API_KEY)
-        signal_coords += vw_signals
+    # 신호등: CSV 우선, 없으면 Vworld JSON
+    if os.path.exists(CSV_SIGNALS_CACHE):
+        with open(CSV_SIGNALS_CACHE, "rb") as f:
+            signal_coords = pickle.load(f)
+        print(f"  신호등 CSV 캐시: {len(signal_coords)}개")
+    elif os.path.exists(CSV_SIGNALS_PATH):
+        t = Transformer.from_crs("EPSG:4326", UTM_CRS, always_xy=True)
+        cx, cy = t.transform(CENTER[1], CENTER[0])
+        signal_coords = load_traffic_signals_csv(
+            CSV_SIGNALS_PATH, UTM_CRS, cx, cy, radius=RADIUS
+        )
+        with open(CSV_SIGNALS_CACHE, "wb") as f:
+            pickle.dump(signal_coords, f)
+        print(f"  신호등 CSV 파싱: {len(signal_coords)}개")
+    else:
+        vw_sigs = points_data.get("traffic_signals", [])
+        signal_coords = [(x, y, 1) for x, y in vw_sigs]
+        print(f"  신호등 Vworld JSON: {len(signal_coords)}개")
+    signal_coords = snap_to_intersections(signal_coords, node_gdf)
     traffic_signal_meshes = make_traffic_signal_meshes(signal_coords)
 
-    # Crossings: OSM (synthetic stripes) + Vworld (actual polygons)
-    crossing_coords = points_data.get("crossing", [])
-    crossing_meshes = make_crossing_meshes(crossing_coords, roads_gdf)
-    if VWORLD_API_KEY:
-        vw_cross_polys = fetch_vworld_crossings(CENTER, RADIUS, VWORLD_API_KEY)
-        for poly in vw_cross_polys:
-            mesh = polygon_to_mesh(poly, height=0.04, base_z=0.02)
-            if mesh:
-                crossing_meshes.append(mesh)
+    # 횡단보도: 보행자 신호등 위치 + Vworld 노면표시 폴리곤
+    ped_coords = [(x, y) for x, y, t in signal_coords if t == 2]
+    crossing_meshes = make_crossing_meshes(ped_coords, roads_gdf)
 
-    print(f"  OSM buildings: {len(building_meshes)}, "
-          f"Vworld: {len(vworld_meshes)}, roads: {len(road_meshes)}")
+    crosswalk_gdf = load_as_gdf("lt_c_b3surfacemark")
+    if crosswalk_gdf is not None:
+        for _, row in crosswalk_gdf.iterrows():
+            geom = row.geometry
+            if isinstance(geom, Polygon):
+                mesh = polygon_to_mesh(geom, height=0.04, base_z=0.02)
+                if mesh:
+                    crossing_meshes.append(mesh)
+        print(f"  횡단보도 Vworld: {len(crosswalk_gdf)}개 폴리곤")
 
-    print("4/4 Writing USD...")
+    print(f"  건물: {len(building_meshes)}, 도로: {len(road_meshes)}, "
+          f"신호등: {len(traffic_signal_meshes)}, 횡단보도: {len(crossing_meshes)}")
+
+    print("4/4 USD 저장...")
     write_usd(
         USD_OUTPUT, building_meshes, road_meshes,
         generated_meshes, traffic_signal_meshes, crossing_meshes,
-        vworld_meshes,
+        [],  # vworld_meshes 별도 레이어 미사용 (건물이 이미 Vworld)
     )
     print("=== Done ===")
     print(f"\nApply textures: python3 apply_textures.py {USD_OUTPUT}")

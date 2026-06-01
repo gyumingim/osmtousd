@@ -5,8 +5,10 @@ import polyscope as ps
 from PIL import Image
 from pxr import Usd, UsdGeom, UsdShade
 
+import sys
+
 CACHE_FILE = "points_cache.pkl"
-USD_PATH = "busan_univ.usda"
+USD_PATH = sys.argv[1] if len(sys.argv) > 1 else "gumi.usda"
 
 # Color per point feature label (RGB 0-1)
 POINT_COLORS = {
