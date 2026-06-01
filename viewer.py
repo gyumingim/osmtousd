@@ -164,6 +164,7 @@ def main():
     )
     signals_v, signals_f, _ = load_group(stage, "/World/TrafficSignals")
     crossings_v, crossings_f, _ = load_group(stage, "/World/Crossings")
+    sidewalks_v, sidewalks_f, _ = load_group(stage, "/World/Sidewalks")
     vworld_v, vworld_f, vworld_c = load_group(
         stage, "/World/VworldBuildings"
     )
@@ -228,25 +229,35 @@ def main():
                         generated_c, (0.50, 0.75, 0.90))
 
     if roads_v is not None:
-        ps.register_surface_mesh(
+        rd = ps.register_surface_mesh(
             "roads", roads_v, roads_f,
             color=(0.35, 0.35, 0.40),
             smooth_shade=False,
         )
+        rd.set_edge_width(0.0)
 
     if signals_v is not None:
         ps.register_surface_mesh(
             "traffic signals", signals_v, signals_f,
-            color=(0.15, 0.15, 0.15),  # dark gray pole + box
+            color=(0.15, 0.15, 0.15),
             smooth_shade=False,
         )
 
     if crossings_v is not None:
-        ps.register_surface_mesh(
+        cw = ps.register_surface_mesh(
             "crossings", crossings_v, crossings_f,
-            color=(0.95, 0.95, 0.95),  # white stripes
+            color=(0.95, 0.95, 0.95),
             smooth_shade=False,
         )
+        cw.set_edge_width(0.0)
+
+    if sidewalks_v is not None:
+        sw_mesh = ps.register_surface_mesh(
+            "sidewalks", sidewalks_v, sidewalks_f,
+            color=(0.75, 0.73, 0.70),
+            smooth_shade=False,
+        )
+        sw_mesh.set_edge_width(0.0)  # 경계선 제거
 
     # Register each point feature as a separate toggleable layer
     for label, coords in points_data.items():

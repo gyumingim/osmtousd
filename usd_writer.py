@@ -10,6 +10,7 @@ def write_usd(
     traffic_signal_meshes: list = None,
     crossing_meshes: list = None,
     vworld_meshes: list = None,
+    sidewalk_meshes: list = None,
 ):
     stage = Usd.Stage.CreateNew(output_path)
     UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
@@ -17,9 +18,10 @@ def write_usd(
 
     world = UsdGeom.Xform.Define(stage, "/World")
 
-    # Buildings with texture support (mesh_data may be 3-tuple or 4-tuple with UVs)
     _write_group(stage, "/World/Buildings", buildings_meshes, "B")
     _write_group(stage, "/World/Roads", roads_meshes, "R")
+    if sidewalk_meshes:
+        _write_group(stage, "/World/Sidewalks", sidewalk_meshes, "SW")
     if generated_meshes:
         _write_group(stage, "/World/GeneratedBuildings", generated_meshes, "G")
     if traffic_signal_meshes:

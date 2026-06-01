@@ -43,11 +43,15 @@ _ROAD_WIDTHS = {
     "busway": 4.0,
 }
 
-# Vworld road_rank → 도로 폭(m): 1=고속 2=국도 3=특별광역시도 4=지방도 5=시군도 6=기타
+# Vworld road_rank → 도로 폭(m)
+# 표준(1-6): 고속~기타 / moctlink 코드(101-107): 고속~시군도
 _VWORLD_ROAD_WIDTHS = {
-    "1": 12.0, "2": 8.0, "3": 7.0,
-    "4": 6.0,  "5": 4.0, "6": 3.0,
+    "1": 12.0, "2": 8.0, "3": 7.0, "4": 6.0, "5": 4.0, "6": 3.0,
+    "101": 12.0, "103": 8.0, "106": 6.0, "107": 4.0,
 }
+
+SIDEWALK_Z = 0.09  # 보도 높이(m) — 도로보다 낮아야 z-fighting 없음
+ROAD_Z = 0.10      # 도로 높이(m) — 보도 위에 올라와서 내부 경계선 가림
 
 
 def get_building_height(row) -> float:
@@ -237,10 +241,48 @@ def get_road_width(highway) -> float:
     return _ROAD_WIDTHS.get(str(highway), 3.0)
 
 
-def road_to_mesh(row):
+def _poly_to_flat_mesh(poly, z):
+    """Polygon → flat mesh tuple at height z. Holes 지원."""
+    if not isinstance(poly, Polygon) or poly.is_empty:
+        return None
+    ext = np.array(poly.exterior.coords[:-1], dtype=np.float64)
+    holes = [np.array(r.coords[:-1], dtype=np.float64)
+             for r in poly.interiors]
+    verts = np.concatenate([ext] + holes) if holes else ext
+    ends = np.array(
+        [len(ext)] + [len(ext) + sum(len(h) for h in holes[:i+1])
+                      for i in range(len(holes))],
+        dtype=np.uint32,
+    )
+    idx = earcut.triangulate_float64(verts[:, :2], ends)
+    if len(idx) == 0:
+        return None
+    tris = idx.reshape(-1, 3)
+    n = len(verts)
+    pts = np.column_stack(
+        [verts[:, 0], verts[:, 1], np.full(n, z)]
+    ).astype(np.float32)
+    return pts, [3] * len(tris), tris.flatten().tolist()
+
+
+def _clip_by_buildings(geom, bldg_tree, bldg_geoms):
+    """geom에서 인근 건물 폴리곤을 제거해 반환."""
+    if bldg_tree is None:
+        return geom
+    for idx in bldg_tree.query(geom):
+        bldg = bldg_geoms[idx]
+        if geom.intersects(bldg):
+            geom = geom.difference(bldg)
+            if geom.is_empty:
+                return None
+    return geom
+
+
+def road_to_mesh(row, bldg_tree=None, bldg_geoms=None):
     """
-    Road edge row -> (points, face_counts, face_indices) or None.
-    OSM: highway 태그 기준 / Vworld: road_rank + lanes 기준.
+    Road edge row → flat mesh.
+    OSM: highway 태그 / Vworld: road_rank + lanes
+    (도로는 건물 클리핑 없음 — 한국 건물 폴리곤이 도로 영역 포함하는 경우 많음)
     """
     rank = row.get("road_rank")
     if rank is not None:
@@ -253,29 +295,78 @@ def road_to_mesh(row):
             width = _VWORLD_ROAD_WIDTHS.get(str(rank), 4.0)
     else:
         width = get_road_width(row.get("highway", "residential"))
-    geom = row.geometry
-    buffered = geom.buffer(width / 2, cap_style=2, join_style=2)
 
+    buffered = row.geometry.buffer(width / 2, cap_style=2, join_style=2)
     if buffered.is_empty or not buffered.is_valid:
         return None
 
-    poly = (
-        buffered if isinstance(buffered, Polygon)
-        else list(buffered.geoms)[0]
+    polys = (
+        list(buffered.geoms) if hasattr(buffered, 'geoms') else [buffered]
     )
-    verts_2d = np.array(poly.exterior.coords[:-1], dtype=np.float64)
-    n = len(verts_2d)
-    rings = np.array([n], dtype=np.uint32)
+    all_pts, all_fc, all_fi, offset = [], [], [], 0
+    for poly in polys:
+        result = _poly_to_flat_mesh(poly, ROAD_Z)
+        if result is None:
+            continue
+        pts, fc, fi = result
+        all_pts.append(pts)
+        all_fc.extend(fc)
+        all_fi.extend([i + offset for i in fi])
+        offset += len(pts)
 
-    idx = earcut.triangulate_float64(verts_2d, rings)
-    if len(idx) == 0:
+    if not all_pts:
+        return None
+    return np.vstack(all_pts), all_fc, all_fi
+
+
+def _road_width(row):
+    """도로 폭(m) 계산. road_to_mesh와 동일 로직."""
+    rank = row.get("road_rank")
+    if rank is not None:
+        lanes = row.get("lanes")
+        try:
+            w = float(lanes) * 3.5 if lanes else 0
+        except (ValueError, TypeError):
+            w = 0
+        return w if w > 0 else _VWORLD_ROAD_WIDTHS.get(str(rank), 4.0)
+    return get_road_width(row.get("highway", "residential"))
+
+
+def sidewalk_to_mesh(row, bldg_tree=None, bldg_geoms=None, sw_width=2.0):
+    """
+    도로 엣지 기준으로 보도 생성.
+    - ring(도넛) 대신 full outer buffer → 내부 경계선(연석) 없음
+    - 도로(ROAD_Z=0.10)가 보도(SIDEWALK_Z=0.09) 위에 올라와 도로 영역을 가림
+    - 건물 폴리곤으로 클리핑
+    """
+    road_w = _road_width(row)
+    geom = row.geometry
+
+    # ring 대신 full outer buffer (hole 없는 단순 폴리곤)
+    sidewalk = geom.buffer(road_w / 2 + sw_width, cap_style=2, join_style=2)
+
+    if sidewalk.is_empty or not sidewalk.is_valid:
         return None
 
-    tris = idx.reshape(-1, 3)
-    points = np.column_stack(
-        [verts_2d[:, 0], verts_2d[:, 1], np.full(n, 0.02)]
-    ).astype(np.float32)
-    face_counts = [3] * len(tris)
-    face_indices = tris.flatten().tolist()
+    # 건물로 클리핑
+    sidewalk = _clip_by_buildings(sidewalk, bldg_tree, bldg_geoms)
+    if sidewalk is None or sidewalk.is_empty:
+        return None
 
-    return points, face_counts, face_indices
+    polys = (
+        list(sidewalk.geoms) if hasattr(sidewalk, 'geoms') else [sidewalk]
+    )
+    all_pts, all_fc, all_fi, offset = [], [], [], 0
+    for poly in polys:
+        result = _poly_to_flat_mesh(poly, SIDEWALK_Z)
+        if result is None:
+            continue
+        pts, fc, fi = result
+        all_pts.append(pts)
+        all_fc.extend(fc)
+        all_fi.extend([i + offset for i in fi])
+        offset += len(pts)
+
+    if not all_pts:
+        return None
+    return np.vstack(all_pts), all_fc, all_fi
