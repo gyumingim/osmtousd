@@ -8,7 +8,8 @@ from pyproj import Transformer
 from osm_fetch import CENTER, RADIUS
 from vworld_loader import load_as_gdf, load_osm_gdf, load_points_data, UTM_CRS
 from geo_to_mesh import (
-    building_to_meshes, road_to_mesh, sidewalk_to_mesh, polygon_to_mesh,
+    building_to_meshes, road_to_mesh, polygon_to_mesh,
+    surface_line_to_mesh, build_road_markings,
 )
 from building_generator import generate_missing_buildings
 from props_generator import (
@@ -27,7 +28,6 @@ def process_signals(signal_coords, roads_gdf, buildings_gdf):
     2. 건물 내부 신호등 → 가장 가까운 도로 엣지 + 인도 오프셋으로 이동
     Returns: list of (x, y, type, angle)
     """
-    from geo_to_mesh import _VWORLD_ROAD_WIDTHS
 
     road_geoms = roads_gdf.geometry.tolist()
     road_tree = STRtree(road_geoms)
@@ -60,10 +60,8 @@ def process_signals(signal_coords, roads_gdf, buildings_gdf):
             # 도로 위 최근접점 + 인도 방향 오프셋
             nearest_pt = road_geom.interpolate(road_geom.project(pt))
             road_row = roads_gdf.iloc[road_idx]
-            rank = road_row.get("road_rank")
             try:
-                width = float(road_row.get("lanes") or 0) * 3.5 or \
-                        _VWORLD_ROAD_WIDTHS.get(str(rank), 4.0)
+                width = float(road_row.get("rvwd") or 0) or 4.0
             except (TypeError, ValueError):
                 width = 4.0
 
@@ -96,7 +94,7 @@ def main():
 
     print("1/4 Vworld 데이터 로드...")
     buildings_gdf = load_as_gdf("lt_c_bldginfo")
-    roads_gdf = load_as_gdf("lt_l_moctlink")
+    roads_gdf = load_as_gdf("lt_l_n3a0020000")
     if buildings_gdf is None or roads_gdf is None:
         print("  [오류] vworld_data/ 파일 없음. 먼저 실행: python3 vworld_fetcher.py")
         return
@@ -121,20 +119,24 @@ def main():
         buildings_gdf, roads_gdf, points_data
     )
 
-    # 건물 STRtree 미리 계산 (도로·보도 클리핑용)
-    bldg_geoms = buildings_gdf.geometry.tolist()
-    bldg_tree = STRtree(bldg_geoms)
-
     road_meshes = []
-    sidewalk_meshes = []
     for _, row in roads_gdf.iterrows():
         mesh = road_to_mesh(row)
         if mesh is not None:
             road_meshes.append(mesh)
-        sw = sidewalk_to_mesh(row, bldg_tree, bldg_geoms)
-        if sw is not None:
-            sidewalk_meshes.append(sw)
-    print(f"  도로: {len(road_meshes)}, 보도: {len(sidewalk_meshes)}")
+
+    sidewalk_meshes = []
+
+    marking_gdf = load_as_gdf("lt_l_b2surfacelinemark")
+    marking_meshes = []
+    if marking_gdf is not None:
+        for _, row in marking_gdf.iterrows():
+            mesh = surface_line_to_mesh(row)
+            if mesh is not None:
+                marking_meshes.append(mesh)
+
+    marking_meshes += build_road_markings(roads_gdf)
+    print(f"  도로: {len(road_meshes)}, 노면선: {len(marking_meshes)}")
 
     # 신호등: CSV 우선, 없으면 Vworld JSON
     if os.path.exists(CSV_SIGNALS_CACHE):
@@ -220,6 +222,7 @@ def main():
         generated_meshes, traffic_signal_meshes, crossing_meshes,
         [],
         sidewalk_meshes,
+        marking_meshes,
     )
     print("=== Done ===")
     print(f"\nApply textures: python3 apply_textures.py {USD_OUTPUT}")

@@ -1,0 +1,1 @@
+{"type": "FeatureCollection", "features": [{"type": "Feature", "id": "lt_l_gimslinea.8538", "geometry": {"type": "MultiLineString", "coordinates": [[[128.15668417, 36.19847434], [128.40270194, 36.11069774]]]}, "geometry_name": "ag_geom", "properties": {"regn_cd": "47150", "sig_nam": "경상북도 김천시"}, "bbox": [128.15668417, 36.11069774, 128.40270194, 36.19847434]}]}

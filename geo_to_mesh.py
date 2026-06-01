@@ -50,8 +50,21 @@ _VWORLD_ROAD_WIDTHS = {
     "101": 12.0, "103": 8.0, "106": 6.0, "107": 4.0,
 }
 
-SIDEWALK_Z = 0.09  # 보도 높이(m) — 도로보다 낮아야 z-fighting 없음
-ROAD_Z = 0.10      # 도로 높이(m) — 보도 위에 올라와서 내부 경계선 가림
+SIDEWALK_Z = 0.09
+ROAD_Z = 0.10
+MARKING_Z = 0.15  # 노면선표시 — 도로(0.10m)보다 충분히 위
+
+# kind → (선 폭(m), RGB색상)
+_MARKING_STYLES = {
+    "501": (0.50, (1.0, 0.9, 0.0)),   # 중앙선 — 노란색
+    "503": (0.30, (1.0, 1.0, 1.0)),   # 차선(점선) — 흰색
+    "505": (0.30, (1.0, 1.0, 1.0)),   # 차선(실선) — 흰색
+    "506": (0.30, (1.0, 1.0, 1.0)),   # 유도선 — 흰색
+    "515": (0.50, (1.0, 0.6, 0.0)),   # 버스전용 — 주황
+    "525": (0.60, (1.0, 1.0, 1.0)),   # 정지선 — 흰색
+    "530": (0.40, (0.4, 0.8, 1.0)),   # 자전거전용 — 하늘색
+    "531": (0.30, (0.4, 0.8, 1.0)),   # 자전거횡단 — 하늘색
+}
 
 
 def get_building_height(row) -> float:
@@ -278,23 +291,32 @@ def _clip_by_buildings(geom, bldg_tree, bldg_geoms):
     return geom
 
 
-def road_to_mesh(row, bldg_tree=None, bldg_geoms=None):
-    """
-    Road edge row → flat mesh.
-    OSM: highway 태그 / Vworld: road_rank + lanes
-    (도로는 건물 클리핑 없음 — 한국 건물 폴리곤이 도로 영역 포함하는 경우 많음)
-    """
-    rank = row.get("road_rank")
-    if rank is not None:
-        lanes = row.get("lanes")
+def road_to_mesh(row, z=None):
+    """Road/footway edge row → flat mesh."""
+    if z is None:
+        z = ROAD_Z
+
+    rvwd = row.get("rvwd")
+    if rvwd is not None:
         try:
-            width = float(lanes) * 3.5 if lanes else 0
+            width = float(rvwd)
         except (ValueError, TypeError):
             width = 0
-        if width <= 0:
-            width = _VWORLD_ROAD_WIDTHS.get(str(rank), 4.0)
     else:
-        width = get_road_width(row.get("highway", "residential"))
+        width = 0
+
+    if width <= 0:
+        rank = row.get("road_rank")
+        if rank is not None:
+            lanes = row.get("lanes")
+            try:
+                width = float(lanes) * 3.5 if lanes else 0
+            except (ValueError, TypeError):
+                width = 0
+            if width <= 0:
+                width = _VWORLD_ROAD_WIDTHS.get(str(rank), 4.0)
+        else:
+            width = get_road_width(row.get("highway", "residential"))
 
     buffered = row.geometry.buffer(width / 2, cap_style=2, join_style=2)
     if buffered.is_empty or not buffered.is_valid:
@@ -305,7 +327,7 @@ def road_to_mesh(row, bldg_tree=None, bldg_geoms=None):
     )
     all_pts, all_fc, all_fi, offset = [], [], [], 0
     for poly in polys:
-        result = _poly_to_flat_mesh(poly, ROAD_Z)
+        result = _poly_to_flat_mesh(poly, z)
         if result is None:
             continue
         pts, fc, fi = result
@@ -319,46 +341,18 @@ def road_to_mesh(row, bldg_tree=None, bldg_geoms=None):
     return np.vstack(all_pts), all_fc, all_fi
 
 
-def _road_width(row):
-    """도로 폭(m) 계산. road_to_mesh와 동일 로직."""
-    rank = row.get("road_rank")
-    if rank is not None:
-        lanes = row.get("lanes")
-        try:
-            w = float(lanes) * 3.5 if lanes else 0
-        except (ValueError, TypeError):
-            w = 0
-        return w if w > 0 else _VWORLD_ROAD_WIDTHS.get(str(rank), 4.0)
-    return get_road_width(row.get("highway", "residential"))
-
-
-def sidewalk_to_mesh(row, bldg_tree=None, bldg_geoms=None, sw_width=2.0):
-    """
-    도로 엣지 기준으로 보도 생성.
-    - ring(도넛) 대신 full outer buffer → 내부 경계선(연석) 없음
-    - 도로(ROAD_Z=0.10)가 보도(SIDEWALK_Z=0.09) 위에 올라와 도로 영역을 가림
-    - 건물 폴리곤으로 클리핑
-    """
-    road_w = _road_width(row)
+def surface_line_to_mesh(row):
+    """노면선표시 row → (pts, fc, fi, color) (kind별 폭·색상, MARKING_Z)."""
+    kind = str(row.get("kind", ""))
+    width, color = _MARKING_STYLES.get(kind, (0.10, (1.0, 1.0, 1.0)))
     geom = row.geometry
-
-    # ring 대신 full outer buffer (hole 없는 단순 폴리곤)
-    sidewalk = geom.buffer(road_w / 2 + sw_width, cap_style=2, join_style=2)
-
-    if sidewalk.is_empty or not sidewalk.is_valid:
+    buffered = geom.buffer(width / 2, cap_style=2, join_style=2)
+    if buffered.is_empty or not buffered.is_valid:
         return None
-
-    # 건물로 클리핑
-    sidewalk = _clip_by_buildings(sidewalk, bldg_tree, bldg_geoms)
-    if sidewalk is None or sidewalk.is_empty:
-        return None
-
-    polys = (
-        list(sidewalk.geoms) if hasattr(sidewalk, 'geoms') else [sidewalk]
-    )
+    polys = list(buffered.geoms) if hasattr(buffered, "geoms") else [buffered]
     all_pts, all_fc, all_fi, offset = [], [], [], 0
     for poly in polys:
-        result = _poly_to_flat_mesh(poly, SIDEWALK_Z)
+        result = _poly_to_flat_mesh(poly, MARKING_Z)
         if result is None:
             continue
         pts, fc, fi = result
@@ -366,7 +360,70 @@ def sidewalk_to_mesh(row, bldg_tree=None, bldg_geoms=None, sw_width=2.0):
         all_fc.extend(fc)
         all_fi.extend([i + offset for i in fi])
         offset += len(pts)
-
     if not all_pts:
         return None
-    return np.vstack(all_pts), all_fc, all_fi
+    return np.vstack(all_pts), all_fc, all_fi, color
+
+
+def _line_to_marking_mesh(geom, width, color):
+    """LineString → flat marking mesh tuple."""
+    buffered = geom.buffer(width / 2, cap_style=2, join_style=2)
+    if buffered.is_empty or not buffered.is_valid:
+        return None
+    polys = list(buffered.geoms) if hasattr(buffered, 'geoms') else [buffered]
+    all_pts, all_fc, all_fi, offset = [], [], [], 0
+    for poly in polys:
+        result = _poly_to_flat_mesh(poly, MARKING_Z)
+        if result is None:
+            continue
+        pts, fc, fi = result
+        all_pts.append(pts)
+        all_fc.extend(fc)
+        all_fi.extend([i + offset for i in fi])
+        offset += len(pts)
+    if not all_pts:
+        return None
+    return np.vstack(all_pts), all_fc, all_fi, color
+
+
+def build_road_markings(gdf):
+    """n3a0020000 GDF → 중앙선(노란) + 내부 차선(흰) 메시 리스트.
+
+    dvyn=CSU002(왕복): 중심선 = 중앙선(황색)
+                       rdln > 2 이면 차선폭 간격으로 흰 차선 추가
+    dvyn=CSU001(일방): 스킵 (중앙분리대 없음)
+    """
+    meshes = []
+    for _, row in gdf.iterrows():
+        dvyn = str(row.get('dvyn') or '')
+        if dvyn != 'CSU002':
+            continue
+
+        geom = row.geometry
+        rdln = int(row.get('rdln') or 1)
+        rvwd = float(row.get('rvwd') or 0)
+
+        # 중앙선 (황색)
+        m = _line_to_marking_mesh(geom, 0.30, (1.0, 0.9, 0.0))
+        if m:
+            meshes.append(m)
+
+        # 내부 차선 (흰색) — 왕복 rdln>2 일 때 양쪽에 생성
+        if rdln > 2 and rvwd > 0:
+            lane_w = rvwd / rdln
+            lanes_per_dir = rdln // 2
+            for k in range(1, lanes_per_dir):
+                dist = lane_w * k
+                for side in ('left', 'right'):
+                    try:
+                        offset_geom = geom.parallel_offset(dist, side)
+                        if offset_geom.is_empty:
+                            continue
+                        m = _line_to_marking_mesh(
+                            offset_geom, 0.20, (1.0, 1.0, 1.0)
+                        )
+                        if m:
+                            meshes.append(m)
+                    except Exception:
+                        pass
+    return meshes

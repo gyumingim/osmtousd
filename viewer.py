@@ -116,20 +116,26 @@ def load_group(stage, group_path: str):
         all_faces.append(idx.reshape(-1, 3) + offset)
         offset += len(verts)
 
-        # Per-face color from texture
+        # Per-face color: texture 우선, 없으면 displayColor
         tex_path = _get_tex_path(child)
         pv_api = UsdGeom.PrimvarsAPI(mesh)
         uv_pv = pv_api.GetPrimvar("st")
         if tex_path and os.path.exists(tex_path) and uv_pv:
             uv_raw = np.array(list(uv_pv.Get()), dtype=np.float32)
             n_faces = len(cnts)
-            # Average UV per face (3 verts per triangle)
             uv_per_face = uv_raw.reshape(n_faces, 3, 2).mean(axis=1)
             face_colors = _sample_texture(tex_path, uv_per_face)
             all_colors.append(face_colors)
             has_colors = True
         else:
-            all_colors.append(None)
+            dc = mesh.GetDisplayColorAttr().Get()
+            if dc is not None and len(dc) > 0:
+                c = np.array(dc[0], dtype=np.float32)
+                n_faces = len(cnts)
+                all_colors.append(np.tile(c, (n_faces, 1)))
+                has_colors = True
+            else:
+                all_colors.append(None)
 
     if not all_verts:
         return None, None, None
@@ -168,8 +174,13 @@ def main():
     vworld_v, vworld_f, vworld_c = load_group(
         stage, "/World/VworldBuildings"
     )
-    print(f"  buildings:           {len(buildings_f):,} triangles")
-    print(f"  roads:               {len(roads_f):,} triangles")
+    markings_v, markings_f, markings_c = load_group(
+        stage, "/World/RoadMarkings"
+    )
+    if buildings_f is not None:
+        print(f"  buildings:           {len(buildings_f):,} triangles")
+    if roads_f is not None:
+        print(f"  roads:               {len(roads_f):,} triangles")
     if generated_f is not None:
         print(f"  generated buildings: {len(generated_f):,} triangles")
 
@@ -257,7 +268,18 @@ def main():
             color=(0.75, 0.73, 0.70),
             smooth_shade=False,
         )
-        sw_mesh.set_edge_width(0.0)  # 경계선 제거
+        sw_mesh.set_edge_width(0.0)
+
+    if markings_v is not None:
+        m_mesh = ps.register_surface_mesh(
+            "road markings", markings_v, markings_f,
+            smooth_shade=False,
+        )
+        m_mesh.set_edge_width(0.0)
+        if markings_c is not None:
+            m_mesh.add_color_quantity(
+                "kind_color", markings_c, defined_on="faces", enabled=True
+            )
 
     # Register each point feature as a separate toggleable layer
     for label, coords in points_data.items():

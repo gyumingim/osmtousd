@@ -1,0 +1,1 @@
+{"type": "FeatureCollection", "features": [{"type": "Feature", "id": "lt_p_sgisgwchg.280", "geometry": {"type": "Point", "coordinates": [128.384448, 36.114902]}, "geometry_name": "ag_geom", "properties": {"code": "47190E030402003", "addr": "경상북도 구미시 공단동 182", "cyongdo": "공업", "cdrink": "비음용"}, "bbox": [128.384448, 36.114902, 128.384448, 36.114902]}]}

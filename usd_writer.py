@@ -11,6 +11,7 @@ def write_usd(
     crossing_meshes: list = None,
     vworld_meshes: list = None,
     sidewalk_meshes: list = None,
+    marking_meshes: list = None,
 ):
     stage = Usd.Stage.CreateNew(output_path)
     UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
@@ -32,6 +33,8 @@ def write_usd(
         _write_group(stage, "/World/Crossings", crossing_meshes, "C")
     if vworld_meshes:
         _write_group(stage, "/World/VworldBuildings", vworld_meshes, "V")
+    if marking_meshes:
+        _write_group(stage, "/World/RoadMarkings", marking_meshes, "M")
 
     stage.SetDefaultPrim(world.GetPrim())
     stage.Save()
@@ -39,7 +42,7 @@ def write_usd(
 
 
 def _write_mesh(stage, prim_path, points, face_counts, face_indices,
-                uv_coords=None, mat=None):
+                uv_coords=None, mat=None, color=None):
     from material import set_uv_primvar, bind_material
     mesh = UsdGeom.Mesh.Define(stage, prim_path)
     mesh.CreatePointsAttr().Set(
@@ -57,6 +60,10 @@ def _write_mesh(stage, prim_path, points, face_counts, face_indices,
     mesh.CreateExtentAttr().Set(
         Vt.Vec3fArray([Gf.Vec3f(*mn.tolist()), Gf.Vec3f(*mx.tolist())])
     )
+    if color is not None:
+        mesh.CreateDisplayColorAttr().Set(
+            Vt.Vec3fArray([Gf.Vec3f(*color)])
+        )
     if uv_coords is not None:
         set_uv_primvar(mesh, uv_coords)
     if mat is not None:
@@ -72,10 +79,13 @@ def _write_group(stage, group_path: str, meshes: list, prefix: str):
             continue
         prim_path = f"{group_path}/{prefix}_{i}"
         if len(mesh_data) == 4:
-            points, face_counts, face_indices, uv_coords = mesh_data
-            # material path stored as 5th element if present
-            _write_mesh(stage, prim_path, points, face_counts,
-                        face_indices, uv_coords)
+            points, face_counts, face_indices, fourth = mesh_data
+            if isinstance(fourth, tuple) and len(fourth) == 3:
+                _write_mesh(stage, prim_path, points, face_counts,
+                            face_indices, color=fourth)
+            else:
+                _write_mesh(stage, prim_path, points, face_counts,
+                            face_indices, fourth)
         elif len(mesh_data) == 5:
             points, face_counts, face_indices, uv_coords, mat = mesh_data
             _write_mesh(stage, prim_path, points, face_counts,

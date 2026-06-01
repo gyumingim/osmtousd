@@ -1,0 +1,67 @@
+{
+  "buildings": {
+    "status": "saved",
+    "desc": "건물",
+    "count": 1903
+  },
+  "roads": {
+    "status": "saved",
+    "desc": "도로(엣지)",
+    "count": 3819
+  },
+  "railways": {
+    "status": "saved",
+    "desc": "철도",
+    "count": 25
+  },
+  "waterways": {
+    "status": "saved",
+    "desc": "수계",
+    "count": 7
+  },
+  "water": {
+    "status": "saved",
+    "desc": "수면",
+    "count": 20
+  },
+  "natural": {
+    "status": "saved",
+    "desc": "자연지형",
+    "count": 57
+  },
+  "wood": {
+    "status": "error",
+    "desc": "숲",
+    "error": "No matching features. Check query location, tags, and log."
+  },
+  "landuse": {
+    "status": "saved",
+    "desc": "토지이용",
+    "count": 131
+  },
+  "amenity": {
+    "status": "saved",
+    "desc": "편의시설",
+    "count": 210
+  },
+  "shop": {
+    "status": "saved",
+    "desc": "상점",
+    "count": 33
+  },
+  "tourism": {
+    "status": "saved",
+    "desc": "관광",
+    "count": 7
+  },
+  "leisure": {
+    "status": "saved",
+    "desc": "여가",
+    "count": 65
+  },
+  "public_transport": {
+    "status": "saved",
+    "desc": "대중교통",
+    "count": 166
+  }
+}
