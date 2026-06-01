@@ -1,0 +1,18 @@
+# Generated output
+*.usda
+*.usdz
+*.usdz
+
+# Caches (re-downloadable)
+*.pkl
+
+# Generated textures (re-generatable)
+textures/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Env
+.env

@@ -1,0 +1,6 @@
+osmnx>=1.9
+shapely>=2.0
+numpy>=1.24
+mapbox-earcut>=1.0
+pyproj>=3.5
+usd-core>=23.11
