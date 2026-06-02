@@ -386,13 +386,27 @@ def _line_to_marking_mesh(geom, width, color):
     return np.vstack(all_pts), all_fc, all_fi, color
 
 
-def build_road_markings(gdf):
+_INTERSECTION_RADIUS = 10.0  # 교차로 노드 기준 마킹 제거 반경(m)
+
+
+def build_road_markings(gdf, nodes_gdf=None):
     """n3a0020000 GDF → 중앙선(노란) + 내부 차선(흰) 메시 리스트.
 
     dvyn=CSU002(왕복): 중심선 = 중앙선(황색)
                        rdln > 2 이면 차선폭 간격으로 흰 차선 추가
     dvyn=CSU001(일방): 스킵 (중앙분리대 없음)
+    nodes_gdf: 교차로 노드 — 반경 10m 내 마킹 제거
     """
+    intersection_zone = None
+    if nodes_gdf is not None and len(nodes_gdf) > 0:
+        inter = nodes_gdf
+        if 'nd_type_h' in nodes_gdf.columns:
+            inter = nodes_gdf[nodes_gdf['nd_type_h'] == '교차로시·종점']
+        if len(inter) > 0:
+            intersection_zone = inter.geometry.buffer(
+                _INTERSECTION_RADIUS
+            ).unary_union
+
     meshes = []
     for _, row in gdf.iterrows():
         dvyn = str(row.get('dvyn') or '')
@@ -403,23 +417,29 @@ def build_road_markings(gdf):
         rdln = int(row.get('rdln') or 1)
         rvwd = float(row.get('rvwd') or 0)
 
-        # 1차로 왕복(골목 등)은 중앙선 없음
         if rdln < 2:
             continue
 
+        clipped = geom
+        if intersection_zone is not None:
+            try:
+                clipped = geom.difference(intersection_zone)
+                if clipped is None or clipped.is_empty:
+                    continue
+            except Exception:
+                clipped = geom
+
         # 중앙선 (황색)
-        m = _line_to_marking_mesh(geom, 0.30, (1.0, 0.9, 0.0))
+        m = _line_to_marking_mesh(clipped, 0.30, (1.0, 0.9, 0.0))
         if m:
             meshes.append(m)
 
         # 내부 차선 (흰색) — 편도 2차로 이상일 때 양쪽에 생성
-        # rdln = 총 차선수, 편도 차선 = rdln // 2
-        # 내부 구분선 개수 = 편도차선 - 1
         lanes_per_dir = rdln // 2
         if lanes_per_dir >= 2 and rvwd > 0:
             lane_w = rvwd / rdln
-            lines = (list(geom.geoms)
-                     if hasattr(geom, 'geoms') else [geom])
+            lines = (list(clipped.geoms)
+                     if hasattr(clipped, 'geoms') else [clipped])
             for k in range(1, lanes_per_dir):
                 dist = lane_w * k
                 for side in ('left', 'right'):

@@ -135,7 +135,8 @@ def main():
             if mesh is not None:
                 marking_meshes.append(mesh)
 
-    marking_meshes += build_road_markings(roads_gdf)
+    nodes_gdf = load_as_gdf("lt_p_moctnode")
+    marking_meshes += build_road_markings(roads_gdf, nodes_gdf)
     print(f"  도로: {len(road_meshes)}, 노면선: {len(marking_meshes)}")
 
     # 신호등: CSV 우선, 없으면 Vworld JSON

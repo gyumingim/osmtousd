@@ -2,8 +2,10 @@ import os
 import pickle
 import numpy as np
 import polyscope as ps
+import polyscope.imgui as psim
 from PIL import Image
 from pxr import Usd, UsdGeom, UsdShade
+from pyproj import Transformer
 
 import sys
 
@@ -159,6 +161,10 @@ def load_group(stage, group_path: str):
 
 
 def main():
+    from vworld_loader import UTM_CRS, _get_origin
+    _cx, _cy = _get_origin()
+    _t_inv = Transformer.from_crs(UTM_CRS, "EPSG:4326", always_xy=True)
+
     print(f"Loading USD: {USD_PATH}")
     stage = Usd.Stage.Open(USD_PATH)
     buildings_v, buildings_f, buildings_c = load_group(
@@ -281,12 +287,49 @@ def main():
                 "kind_color", markings_c, defined_on="faces", enabled=True
             )
 
+    # 교차로 노드 포인트
+    try:
+        from vworld_loader import load_as_gdf
+        nodes_gdf = load_as_gdf("lt_p_moctnode")
+        if nodes_gdf is not None:
+            inter = nodes_gdf[nodes_gdf.get('nd_type_h', '') == '교차로시·종점'] \
+                if 'nd_type_h' in nodes_gdf.columns else nodes_gdf
+            pts = np.array([[row.geometry.x, row.geometry.y, 2.0]
+                            for _, row in inter.iterrows()
+                            if row.geometry is not None])
+            if len(pts) > 0:
+                nc = ps.register_point_cloud(
+                    "intersections", pts, color=(0.0, 0.0, 0.0)
+                )
+                nc.set_radius(2.0, relative=False)
+                print(f"  교차로 노드: {len(pts)}개")
+    except Exception as e:
+        print(f"  교차로 노드 로드 실패: {e}")
+
     # Register each point feature as a separate toggleable layer
     for label, coords in points_data.items():
         pts = np.array([[x, y, 1.5] for x, y in coords])
         color = POINT_COLORS.get(label, (1.0, 1.0, 1.0))
         pc = ps.register_point_cloud(label, pts, color=color)
         pc.set_radius(8.0, relative=False)
+
+    _coord_text = ["클릭해서 위치 확인"]
+
+    def user_callback():
+        psim.SetNextWindowPos([10, 10], 1)  # 1 = ImGuiCond_Once
+        psim.Begin("좌표", True)
+        psim.Text(_coord_text[0])
+        psim.End()
+
+        if ps.have_selection():
+            result = ps.get_selection()
+            if result.is_hit:
+                lx, ly = result.position[0], result.position[1]
+                utm_x, utm_y = lx + _cx, ly + _cy
+                lon, lat = _t_inv.transform(utm_x, utm_y)
+                _coord_text[0] = f"lat: {lat:.6f}\nlon: {lon:.6f}"
+
+    ps.set_user_callback(user_callback)
 
     print("\nControls:")
     print("  left drag  : rotate")
