@@ -12,6 +12,7 @@ def write_usd(
     vworld_meshes: list = None,
     sidewalk_meshes: list = None,
     marking_meshes: list = None,
+    intersection_meshes: list = None,
 ):
     stage = Usd.Stage.CreateNew(output_path)
     UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
@@ -35,6 +36,8 @@ def write_usd(
         _write_group(stage, "/World/VworldBuildings", vworld_meshes, "V")
     if marking_meshes:
         _write_group(stage, "/World/RoadMarkings", marking_meshes, "M")
+    if intersection_meshes:
+        _write_group(stage, "/World/Intersections", intersection_meshes, "I")
 
     stage.SetDefaultPrim(world.GetPrim())
     stage.Save()

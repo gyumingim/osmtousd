@@ -10,14 +10,15 @@ re-download needed. Run after main.py has generated the USD geometry.
 import sys
 import os
 import numpy as np
-from pxr import Usd, UsdGeom
+from pxr import Usd, UsdGeom, UsdShade, Vt
 
 from texture_gen import generate_all_textures, get_texture_path
 from material import create_material, bind_material, set_uv_primvar
 
 USD_FILE = "busan_univ.usda"
-BAY_W = 3.0    # meters per window bay (UV tiling unit)
-FLOOR_H = 3.0  # meters per floor
+BAY_W = 3.0      # meters per window bay (UV tiling unit)
+FLOOR_H = 3.0    # meters per floor
+ROAD_UV = 4.0    # asphalt UV tile size (meters)
 
 # Style assigned to each building group
 GROUP_STYLES = {
@@ -43,7 +44,7 @@ _VW_CYCLE = [
 ]
 
 
-def _triplanar_uv(pts_np):
+def _triplanar_uv(pts_np, tile=BAY_W):
     """
     Compute face-varying UV for one triangle via triplanar projection.
     pts_np: (3, 3) float array — triangle vertices
@@ -61,18 +62,15 @@ def _triplanar_uv(pts_np):
     uvs = []
     for p in pts_np:
         if az >= ax and az >= ay:
-            # Horizontal face (roof / ground) → XY
-            uvs.append((p[0] / BAY_W, p[1] / BAY_W))
+            uvs.append((p[0] / tile, p[1] / tile))
         elif ax >= ay:
-            # Wall facing ±X → YZ
             uvs.append((p[1] / BAY_W, p[2] / FLOOR_H))
         else:
-            # Wall facing ±Y → XZ
             uvs.append((p[0] / BAY_W, p[2] / FLOOR_H))
     return uvs
 
 
-def _mesh_uvs(pts, face_counts, face_indices):
+def _mesh_uvs(pts, face_counts, face_indices, tile=BAY_W):
     """Compute full face-varying UV list for a mesh."""
     pts_np = np.array(pts, dtype=np.float32)
     uv_list = []
@@ -80,12 +78,11 @@ def _mesh_uvs(pts, face_counts, face_indices):
     for fc in face_counts:
         verts = pts_np[[face_indices[fi + k] for k in range(fc)]]
         if fc == 3:
-            uv_list.extend(_triplanar_uv(verts))
+            uv_list.extend(_triplanar_uv(verts, tile=tile))
         else:
-            # Fan triangulate for safety
             for t in range(fc - 2):
                 tri = np.array([verts[0], verts[t + 1], verts[t + 2]])
-                uv_list.extend(_triplanar_uv(tri))
+                uv_list.extend(_triplanar_uv(tri, tile=tile))
         fi += fc
     return uv_list
 
@@ -140,9 +137,41 @@ def apply_textures(usd_path):
                     roughness=0.75, metallic=0.0,
                 )
 
-            uv_list = _mesh_uvs(pts, counts, indices)
+            is_road = style == "asphalt"
+            uv_list = _mesh_uvs(pts, counts, indices,
+                                tile=ROAD_UV if is_road else BAY_W)
             set_uv_primvar(mesh, uv_list)
             bind_material(child, mat_cache[tex_path])
+
+            # Roof faces: separate material via GeomSubset
+            if not is_road:
+                pts_np = np.array(pts, dtype=np.float32)
+                max_z = pts_np[:, 2].max()
+                roof_idxs = []
+                fi = 0
+                for face_i, fc in enumerate(counts):
+                    zs = [pts_np[indices[fi + k], 2] for k in range(fc)]
+                    if all(abs(z - max_z) < 0.15 for z in zs):
+                        roof_idxs.append(face_i)
+                    fi += fc
+                if roof_idxs:
+                    roof_tex = get_texture_path("roof", idx % 4)
+                    if roof_tex not in mat_cache:
+                        mat_cache[roof_tex] = create_material(
+                            stage,
+                            f"/World/Materials/M_{len(mat_cache)}",
+                            roof_tex, roughness=0.9, metallic=0.0,
+                        )
+                    sub = UsdGeom.Subset.Define(
+                        stage, str(child.GetPath()) + "/roof"
+                    )
+                    sub.CreateElementTypeAttr("face")
+                    sub.CreateFamilyNameAttr("materialBind")
+                    sub.CreateIndicesAttr(Vt.IntArray(roof_idxs))
+                    UsdShade.MaterialBindingAPI(sub.GetPrim()).Bind(
+                        mat_cache[roof_tex]
+                    )
+
             total += 1
 
     stage.Save()

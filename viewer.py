@@ -183,6 +183,7 @@ def main():
     markings_v, markings_f, markings_c = load_group(
         stage, "/World/RoadMarkings"
     )
+    inter_v, inter_f, inter_c = load_group(stage, "/World/Intersections")
     if buildings_f is not None:
         print(f"  buildings:           {len(buildings_f):,} triangles")
     if roads_f is not None:
@@ -286,6 +287,74 @@ def main():
             m_mesh.add_color_quantity(
                 "kind_color", markings_c, defined_on="faces", enabled=True
             )
+
+    if inter_v is not None:
+        im = ps.register_surface_mesh(
+            "intersections_3d", inter_v, inter_f, smooth_shade=False
+        )
+        im.set_edge_width(0.0)
+        if inter_c is not None:
+            im.add_color_quantity(
+                "color", inter_c, defined_on="faces", enabled=True
+            )
+
+    # Road Graph — GDF에서 직접 차선별 curve network 생성
+    try:
+        from vworld_loader import load_as_gdf as _load_gdf
+        rg_gdf = _load_gdf("lt_l_n3a0020000")
+        if rg_gdf is not None:
+            all_nodes, all_edges = [], []
+            offset = 0
+            for _, row in rg_gdf.iterrows():
+                geom = row.geometry
+                rdln = int(row.get('rdln') or 1)
+                rvwd = float(row.get('rvwd') or 0)
+                lane_w = rvwd / rdln if rdln > 0 and rvwd > 0 else 3.5
+                src = (list(geom.geoms)
+                       if hasattr(geom, 'geoms') else [geom])
+                for line in src:
+                    for k in range(rdln):
+                        half = rdln / 2
+                        off = (k - half + 0.5) * lane_w
+                        try:
+                            if abs(off) < 0.01:
+                                ll = line
+                            elif off > 0:
+                                ll = line.parallel_offset(off, 'right')
+                            else:
+                                ll = line.parallel_offset(-off, 'left')
+                            if ll is None or ll.is_empty:
+                                continue
+                            subs = (list(ll.geoms)
+                                    if hasattr(ll, 'geoms') else [ll])
+                            for sl in subs:
+                                coords = list(sl.coords)
+                                if len(coords) < 2:
+                                    continue
+                                pts = np.array(
+                                    [[c[0], c[1], 0.12] for c in coords]
+                                )
+                                all_nodes.append(pts)
+                                for e in range(len(coords) - 1):
+                                    all_edges.append(
+                                        [offset + e, offset + e + 1]
+                                    )
+                                offset += len(coords)
+                        except Exception:
+                            pass
+            if all_nodes:
+                nodes_np = np.vstack(all_nodes)
+                edges_np = np.array(all_edges, dtype=np.int32)
+                rg = ps.register_curve_network(
+                    "road graph", nodes_np, edges_np,
+                    color=(0.0, 0.8, 1.0),
+                )
+                rg.set_radius(0.8, relative=False)
+                rg.set_enabled(False)
+                print(f"  road graph: {len(nodes_np):,} nodes, "
+                      f"{len(edges_np):,} edges")
+    except Exception as e:
+        print(f"  road graph 로드 실패: {e}")
 
     # 교차로 노드 포인트
     try:
