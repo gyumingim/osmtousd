@@ -162,10 +162,25 @@ PED_USDS = [
 ]
 
 
-def spawn_actors(wps):
-    """경로 옆에 실제 차량(지게차)/보행자 에셋 배치 (bbox 라벨용)."""
-    UsdGeom.Xform.Define(stage, "/World/Actors")
-    # (경로인덱스, 측면오프셋 m, 라벨, USD, 추가yaw)
+ACTOR_MODE = os.environ.get("ACTOR_MODE", "static")  # static / vru
+_ACTORS = []  # [{"path","prim","x","y","z","yaw","vx","vy","label","behavior"}]
+
+
+def _make_actor(path, usd, x, y, z, yaw, label, vx=0.0, vy=0.0,
+                behavior="static"):
+    parent = UsdGeom.Xform.Define(stage, path)
+    add_reference_to_stage(usd_path=usd, prim_path=path + "/model")
+    api = UsdGeom.XformCommonAPI(parent)
+    api.SetTranslate(Gf.Vec3d(x, y, z))
+    api.SetRotate(Gf.Vec3f(0, 0, yaw),
+                  UsdGeom.XformCommonAPI.RotationOrderXYZ)
+    add_update_semantics(parent.GetPrim(), label)
+    _ACTORS.append({"path": path, "prim": parent, "x": x, "y": y, "z": z,
+                    "yaw": yaw, "vx": vx, "vy": vy, "label": label,
+                    "behavior": behavior})
+
+
+def _spawn_static(wps):
     plan = [
         (2,  4.0, "vehicle", VEHICLE_USD, 0),
         (4, -4.0, "vehicle", VEHICLE_USD, 180),
@@ -173,25 +188,53 @@ def spawn_actors(wps):
         (3,  3.0, "pedestrian", PED_USDS[0], 0),
         (5, -3.0, "pedestrian", PED_USDS[1], 0),
     ]
-    n = 0
     for idx, lat, label, usd, dyaw in plan:
         if idx >= len(wps):
             continue
         x, y, z, yaw = wps[idx]
         yr = np.radians(yaw)
-        ax = x + np.sin(yr) * lat
-        ay = y - np.cos(yr) * lat
-        p = f"/World/Actors/{label}_{idx}"
-        # 부모 Xform 만들고 그 아래에 에셋 참조 → 내가 트랜스폼 제어
-        parent = UsdGeom.Xform.Define(stage, p)
-        add_reference_to_stage(usd_path=usd, prim_path=p + "/model")
-        api = UsdGeom.XformCommonAPI(parent)
-        api.SetTranslate(Gf.Vec3d(ax, ay, z - 0.5))  # 지면
-        api.SetRotate(Gf.Vec3f(0, 0, yaw + dyaw),
-                      UsdGeom.XformCommonAPI.RotationOrderXYZ)
-        add_update_semantics(parent.GetPrim(), label)
-        n += 1
-    return n
+        _make_actor(f"/World/Actors/{label}_{idx}", usd,
+                    x + np.sin(yr) * lat, y - np.cos(yr) * lat, z - 0.5,
+                    yaw + dyaw, label)
+
+
+def _spawn_vru(wps):
+    """보행자 횡단(정상/무단) + 이륜차 끼어들기 — ego 전방을 가로지름."""
+    x0_, y0_, z0_, yaw0_ = wps[0]
+    yr = np.radians(yaw0_)
+    fwd = np.array([np.cos(yr), np.sin(yr)])         # 진행방향
+    left = np.array([-np.sin(yr), np.cos(yr)])       # 좌측
+    base = np.array([x0_, y0_]) + fwd * 14           # 전방 14m 횡단지점
+    # (라벨, USD, 시작측면offset, 속도방향, 속력 m/s, 행동)
+    plan = [
+        ("pedestrian", PED_USDS[0],  10.0, -left, 1.4, "normal_cross"),
+        ("pedestrian", PED_USDS[1], -8.0,  left, 1.8, "jaywalk"),
+        ("cyclist",    PED_USDS[0],  6.0, fwd * -1, 4.5, "cutin"),
+    ]
+    for i, (label, usd, off, vdir, spd, beh) in enumerate(plan):
+        start = base + left * off
+        vel = vdir / (np.linalg.norm(vdir) + 1e-9) * spd
+        head = float(np.degrees(np.arctan2(vel[1], vel[0])))
+        _make_actor(f"/World/Actors/{label}_{i}", usd,
+                    float(start[0]), float(start[1]), z0_ - 0.5,
+                    head, label, float(vel[0]), float(vel[1]), beh)
+
+
+def spawn_actors(wps):
+    UsdGeom.Xform.Define(stage, "/World/Actors")
+    (_spawn_vru if ACTOR_MODE == "vru" else _spawn_static)(wps)
+    return len(_ACTORS)
+
+
+def move_actors():
+    """속도 있는 액터를 DT만큼 전진 (VRU 모션)."""
+    for a in _ACTORS:
+        if a["vx"] == 0 and a["vy"] == 0:
+            continue
+        a["x"] += a["vx"] * DT
+        a["y"] += a["vy"] * DT
+        UsdGeom.XformCommonAPI(a["prim"]).SetTranslate(
+            Gf.Vec3d(a["x"], a["y"], a["z"]))
 
 
 n_actors = spawn_actors(waypoints)
@@ -539,6 +582,7 @@ for fi in range(NUM_FRAMES):
   try:
     x, y, z, yaw = waypoints[fi]
     move_ego(x, y, z, yaw)
+    move_actors()  # VRU 모션 (정적 액터는 무변화)
 
     for name in _CAM_LOCAL:
         pos, look = cam_pose(name, x, y, z, yaw)
@@ -595,6 +639,9 @@ for fi in range(NUM_FRAMES):
         "distance_m": float(fi * DIST_STEP),
         "bbox2d": bbox_json,
         "bbox3d": boxes3d,
+        "actors": [{"label": a["label"], "behavior": a["behavior"],
+                    "x": round(a["x"], 2), "y": round(a["y"], 2),
+                    "yaw": round(a["yaw"], 1)} for a in _ACTORS],
         "lidar_pts": int(len(pts)) if pts is not None else 0,
         "proximity_m": {lbl: float(v) for lbl, v in us_vals},
         "labels": {
