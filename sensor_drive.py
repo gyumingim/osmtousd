@@ -21,6 +21,7 @@ from isaacsim.sensors.rtx import LidarRtx, get_gmo_data
 from isaacsim.core.utils.semantics import add_update_semantics
 from isaacsim.storage.native import get_assets_root_path
 from omni.physx import get_physx_scene_query_interface
+from environment import apply_lighting, apply_weather
 
 STAGE_PATH = "/home/karma/OSMtoUSD/gumi.usda"
 OUTPUT_DIR = "/home/karma/OSMtoUSD/output"
@@ -61,13 +62,12 @@ if not stage.GetPrimAtPath("/World/PhysicsScene").IsValid():
 sim_ctx = SimulationContext(stage_units_in_meters=1.0,
                             physics_dt=1.0 / 60, rendering_dt=1.0 / 60)
 
-# ── 3. 조명 ───────────────────────────────────────────────────────────────────
-dome = UsdLux.DomeLight.Define(stage, "/World/DomeLight")
-dome.CreateIntensityAttr(800.0)
-sun = UsdLux.DistantLight.Define(stage, "/World/SunLight")
-sun.CreateIntensityAttr(3000.0)
-UsdGeom.XformCommonAPI(sun).SetRotate(
-    Gf.Vec3f(-45, 0, 45), UsdGeom.XformCommonAPI.RotationOrderXYZ)
+# ── 3. 환경(조명·기상) 프리셋 — 환경변수로 변주 ──────────────────────────────
+LIGHTING = os.environ.get("ENV_LIGHTING", "day")   # dawn/day/dusk/night
+WEATHER  = os.environ.get("ENV_WEATHER", "clear")  # clear/cloudy/fog/rain
+apply_lighting(stage, LIGHTING)
+apply_weather(stage, WEATHER)
+print(f"환경: 조명={LIGHTING}, 기상={WEATHER}")
 
 # ── 3b. 씬 그룹 semantics (세그멘테이션용, 그룹→자식 전파) ────────────────────
 _SCENE_LABELS = {
@@ -510,6 +510,8 @@ def make_composite(cam_imgs, ld_img, us_img, seg_img, depth_img, fi):
     draw.text((20,  650), f"Frame {fi:02d}/{NUM_FRAMES-1}", fill=(200, 200, 255))
     draw.text((20,  672), "Speed: 100 km/h", fill=(0, 255, 100))
     draw.text((20,  694), f"Dist: {fi * DIST_STEP:.1f}m", fill=(255, 200, 0))
+    draw.text((220, 650), f"Light: {LIGHTING}", fill=(255, 220, 120))
+    draw.text((220, 672), f"Weather: {WEATHER}", fill=(150, 200, 255))
     return np.array(canvas)
 
 
@@ -569,6 +571,7 @@ for fi in range(NUM_FRAMES):
     # JSON
     meta = {
         "frame": fi,
+        "environment": {"lighting": LIGHTING, "weather": WEATHER},
         "ego": {"x": float(x), "y": float(y), "z": float(z),
                 "yaw_deg": float(yaw)},
         "speed_kph": 100.0,
