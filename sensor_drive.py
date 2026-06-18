@@ -24,11 +24,13 @@ from omni.physx import get_physx_scene_query_interface
 from environment import apply_lighting, apply_weather
 
 STAGE_PATH = "/home/karma/OSMtoUSD/gumi.usda"
-OUTPUT_DIR = "/home/karma/OSMtoUSD/output"
+# OUTPUT_SUBDIR 환경변수로 시나리오별 폴더 분리 (예: scenario_01/day_rain)
+_BASE_OUT = "/home/karma/OSMtoUSD/output"
+OUTPUT_DIR = os.path.join(_BASE_OUT, os.environ.get("OUTPUT_SUBDIR", ""))
 SPEED_MPS  = 100 / 3.6
 DT         = 1.0 / 10
 DIST_STEP  = SPEED_MPS * DT
-NUM_FRAMES = 10
+NUM_FRAMES = int(os.environ.get("NUM_FRAMES", "10"))
 CAM_W, CAM_H = 640, 360
 LIDAR_CONFIG = "Example_Rotary"   # 여러 예제에서 검증된 config
 
@@ -337,6 +339,20 @@ def get_lidar_pts(fi):
     return None
 
 
+# 악천후 센서 성능 저하 (비/안개 → LiDAR 노이즈 + 포인트 드롭)
+_WEATHER_NOISE = {"rain": (0.10, 0.25), "fog": (0.05, 0.50)}
+
+
+def degrade_lidar(pts):
+    """WEATHER에 따라 거리 노이즈 + 랜덤 포인트 드롭."""
+    if pts is None or WEATHER not in _WEATHER_NOISE:
+        return pts
+    sigma, drop = _WEATHER_NOISE[WEATHER]
+    pts = pts + np.random.normal(0, sigma, pts.shape).astype(pts.dtype)
+    keep = np.random.random(len(pts)) > drop
+    return pts[keep]
+
+
 def raycast_us(ex, ey, ez, yaw_deg):
     """ego 포즈 기준 4방향 raycast. (label, dist) 리스트 반환."""
     yr = np.radians(yaw_deg)
@@ -545,7 +561,7 @@ for fi in range(NUM_FRAMES):
     log(f"  frame {fi}: 카메라 {len(cam_imgs)}장 bbox={n_bb}")
 
     # LiDAR / 근접 raycast
-    pts = get_lidar_pts(fi)
+    pts = degrade_lidar(get_lidar_pts(fi))
     us_vals = raycast_us(x, y, z, yaw)
 
     # 자동 라벨 (front): 세그/인스턴스/깊이/3D박스
