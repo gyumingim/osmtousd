@@ -220,10 +220,57 @@ def _spawn_vru(wps):
                     head, label, float(vel[0]), float(vel[1]), beh)
 
 
+def _spawn_collision(wps):
+    """경로 옆 고장차(갓길) + 측면 교차 진입차량 → 충돌 코스(경로 비중첩)."""
+    idx = min(len(wps) - 1, max(1, int(NUM_FRAMES * 0.7)))
+    x, y, z, yaw = wps[idx]
+    yr = np.radians(yaw)
+    left = np.array([-np.sin(yr), np.cos(yr)])
+    # 정지 고장차: 경로에서 2.5m 옆 (ego 비중첩, 근접 통과)
+    sp = np.array([x, y]) + left * 2.5
+    _make_actor("/World/Actors/stalled_veh", VEHICLE_USD,
+                float(sp[0]), float(sp[1]), z - 0.5, yaw,
+                "vehicle", 0.0, 0.0, "stalled")
+    # 측면 교차 진입차량: 전방 중간지점 옆에서 경로로 합류
+    mx, my, mz, myaw = wps[min(len(wps) - 1, NUM_FRAMES // 2)]
+    s = np.array([mx, my]) + left * 10
+    vel = -left / (np.linalg.norm(left) + 1e-9) * 5.0
+    head = float(np.degrees(np.arctan2(vel[1], vel[0])))
+    _make_actor("/World/Actors/crossing_veh", VEHICLE_USD,
+                float(s[0]), float(s[1]), mz - 0.5, head,
+                "vehicle", float(vel[0]), float(vel[1]), "crossing")
+
+
 def spawn_actors(wps):
     UsdGeom.Xform.Define(stage, "/World/Actors")
-    (_spawn_vru if ACTOR_MODE == "vru" else _spawn_static)(wps)
+    {"vru": _spawn_vru, "collision": _spawn_collision}.get(
+        ACTOR_MODE, _spawn_static)(wps)
     return len(_ACTORS)
+
+
+def compute_ttc(ex, ey, evx, evy):
+    """ego와 액터들 간 최소 TTC(s)·최소거리(m)·위험단계."""
+    best_ttc, min_rng = float("inf"), float("inf")
+    for a in _ACTORS:
+        rx, ry = a["x"] - ex, a["y"] - ey
+        rng = float(np.hypot(rx, ry))
+        min_rng = min(min_rng, rng)
+        rvx, rvy = a["vx"] - evx, a["vy"] - evy
+        closing = -(rx * rvx + ry * rvy) / (rng + 1e-9)
+        if closing > 0.1:
+            best_ttc = min(best_ttc, rng / closing)
+    if min_rng < 2.5:
+        phase = "collision"
+    elif best_ttc <= 1.0:
+        phase = "imminent"
+    elif best_ttc <= 3.0:
+        phase = "warning"
+    elif best_ttc < float("inf"):
+        phase = "approaching"
+    else:
+        phase = "clear"
+    return (round(best_ttc, 2) if best_ttc != float("inf") else None,
+            round(min_rng, 2), phase)
 
 
 def move_actors():
@@ -583,6 +630,10 @@ for fi in range(NUM_FRAMES):
     x, y, z, yaw = waypoints[fi]
     move_ego(x, y, z, yaw)
     move_actors()  # VRU 모션 (정적 액터는 무변화)
+    # ego 속도 벡터 (다음 웨이포인트 기준) → TTC 계산
+    nx, ny = waypoints[min(fi + 1, len(waypoints) - 1)][:2]
+    ego_vx, ego_vy = (nx - x) / DT, (ny - y) / DT
+    ttc, ttc_rng, ttc_phase = compute_ttc(x, y, ego_vx, ego_vy)
 
     for name in _CAM_LOCAL:
         pos, look = cam_pose(name, x, y, z, yaw)
@@ -642,6 +693,7 @@ for fi in range(NUM_FRAMES):
         "actors": [{"label": a["label"], "behavior": a["behavior"],
                     "x": round(a["x"], 2), "y": round(a["y"], 2),
                     "yaw": round(a["yaw"], 1)} for a in _ACTORS],
+        "ttc": {"ttc_s": ttc, "min_range_m": ttc_rng, "phase": ttc_phase},
         "lidar_pts": int(len(pts)) if pts is not None else 0,
         "proximity_m": {lbl: float(v) for lbl, v in us_vals},
         "labels": {
