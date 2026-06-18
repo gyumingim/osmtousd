@@ -9,7 +9,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from PIL import Image, ImageDraw
-from pxr import UsdGeom, UsdLux, UsdPhysics, Gf, Sdf
+from pxr import UsdGeom, UsdPhysics, Gf, Sdf
 
 import omni
 import omni.kit.commands
@@ -27,7 +27,8 @@ STAGE_PATH = "/home/karma/OSMtoUSD/gumi.usda"
 # OUTPUT_SUBDIR 환경변수로 시나리오별 폴더 분리 (예: scenario_01/day_rain)
 _BASE_OUT = "/home/karma/OSMtoUSD/output"
 OUTPUT_DIR = os.path.join(_BASE_OUT, os.environ.get("OUTPUT_SUBDIR", ""))
-SPEED_MPS  = 100 / 3.6
+SPEED_KPH  = float(os.environ.get("SPEED_KPH", "100"))  # AMR 등 저속 변주
+SPEED_MPS  = SPEED_KPH / 3.6
 DT         = 1.0 / 10
 DIST_STEP  = SPEED_MPS * DT
 NUM_FRAMES = int(os.environ.get("NUM_FRAMES", "10"))
@@ -524,7 +525,7 @@ def make_composite(cam_imgs, ld_img, us_img, seg_img, depth_img, fi):
 
     draw.rectangle([0, 640, 640, H], fill=(10, 10, 30))
     draw.text((20,  650), f"Frame {fi:02d}/{NUM_FRAMES-1}", fill=(200, 200, 255))
-    draw.text((20,  672), "Speed: 100 km/h", fill=(0, 255, 100))
+    draw.text((20,  672), f"Speed: {SPEED_KPH:.0f} km/h", fill=(0, 255, 100))
     draw.text((20,  694), f"Dist: {fi * DIST_STEP:.1f}m", fill=(255, 200, 0))
     draw.text((220, 650), f"Light: {LIGHTING}", fill=(255, 220, 120))
     draw.text((220, 672), f"Weather: {WEATHER}", fill=(150, 200, 255))
@@ -590,7 +591,7 @@ for fi in range(NUM_FRAMES):
         "environment": {"lighting": LIGHTING, "weather": WEATHER},
         "ego": {"x": float(x), "y": float(y), "z": float(z),
                 "yaw_deg": float(yaw)},
-        "speed_kph": 100.0,
+        "speed_kph": SPEED_KPH,
         "distance_m": float(fi * DIST_STEP),
         "bbox2d": bbox_json,
         "bbox3d": boxes3d,
