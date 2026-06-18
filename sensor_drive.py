@@ -31,7 +31,8 @@ NUM_FRAMES = 10
 CAM_W, CAM_H = 640, 360
 LIDAR_CONFIG = "Example_Rotary"   # 여러 예제에서 검증된 config
 
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+LABELS_DIR = os.path.join(OUTPUT_DIR, "labels")
+os.makedirs(LABELS_DIR, exist_ok=True)
 
 # 즉시 flush되는 파일 로깅 (Isaac stdout 버퍼링 우회)
 _LOGF = os.path.join(OUTPUT_DIR, "run.log")
@@ -67,6 +68,23 @@ sun = UsdLux.DistantLight.Define(stage, "/World/SunLight")
 sun.CreateIntensityAttr(3000.0)
 UsdGeom.XformCommonAPI(sun).SetRotate(
     Gf.Vec3f(-45, 0, 45), UsdGeom.XformCommonAPI.RotationOrderXYZ)
+
+# ── 3b. 씬 그룹 semantics (세그멘테이션용, 그룹→자식 전파) ────────────────────
+_SCENE_LABELS = {
+    "/World/Buildings": "building",
+    "/World/GeneratedBuildings": "building",
+    "/World/VworldBuildings": "building",
+    "/World/Roads": "road",
+    "/World/RoadMarkings": "road_marking",
+    "/World/Crossings": "crosswalk",
+    "/World/Sidewalks": "sidewalk",
+    "/World/TrafficSignals": "traffic_sign",
+}
+for _path, _label in _SCENE_LABELS.items():
+    _p = stage.GetPrimAtPath(_path)
+    if _p.IsValid():
+        add_update_semantics(_p, _label)
+print("씬 그룹 semantics 적용")
 
 
 # ── 4. 경로 추출 — 건물 밀집 구간에서 시작 ───────────────────────────────────
@@ -218,6 +236,7 @@ def cam_pose(name, ex, ey, ez, yaw_deg):
 
 
 cameras, rgb_an, bbox_an = {}, {}, {}
+front_rp = None
 for name in _CAM_LOCAL:
     pos, look = cam_pose(name, x0, y0, z0, yaw0)
     cam = rep.create.camera(position=pos, look_at=look, focal_length=18.0)
@@ -229,7 +248,20 @@ for name in _CAM_LOCAL:
     cameras[name] = cam
     rgb_an[name]  = r
     bbox_an[name] = b
+    if name == "front":
+        front_rp = rp
 print("카메라 4대 생성")
+
+# ── 6b. 자동 라벨 annotator (front 카메라) ────────────────────────────────────
+seg_an = rep.AnnotatorRegistry.get_annotator(
+    "semantic_segmentation", init_params={"colorize": True})
+inst_an = rep.AnnotatorRegistry.get_annotator(
+    "instance_segmentation_fast", init_params={"colorize": True})
+depth_an = rep.AnnotatorRegistry.get_annotator("distance_to_camera")
+bbox3d_an = rep.AnnotatorRegistry.get_annotator("bounding_box_3d")
+for a in (seg_an, inst_an, depth_an, bbox3d_an):
+    a.attach([front_rp])
+print("자동 라벨 annotator 4종 부착 (front)")
 
 # ── 7. 뷰포트 chase cam ───────────────────────────────────────────────────────
 chase = UsdGeom.Camera.Define(stage, ego_path + "/ChaseCam")
@@ -350,6 +382,48 @@ def parse_bboxes(bbox):
     return out
 
 
+# ── 라벨(세그/깊이/3D) 처리 ──────────────────────────────────────────────────
+def seg_to_rgb(seg_data):
+    """semantic/instance seg (colorize=True) → RGB ndarray."""
+    if seg_data is None:
+        return None
+    arr = seg_data["data"] if isinstance(seg_data, dict) else seg_data
+    arr = np.asarray(arr)
+    if arr.ndim == 3 and arr.shape[2] >= 3:
+        return arr[:, :, :3].astype(np.uint8)
+    return None
+
+
+def depth_to_rgb(depth, max_m=60.0):
+    """거리맵 → jet 컬러맵 RGB (가까움=빨강)."""
+    if depth is None:
+        return None
+    d = np.asarray(depth, dtype=np.float32)
+    d = np.where(np.isfinite(d), d, max_m)
+    d = np.clip(d, 0, max_m) / max_m
+    rgba = plt.cm.jet_r(d)
+    return (rgba[:, :, :3] * 255).astype(np.uint8)
+
+
+def parse_bbox3d(b3):
+    out = []
+    if not b3 or "data" not in b3 or len(b3["data"]) == 0:
+        return out
+    id2label = b3.get("info", {}).get("idToLabels", {})
+    for bb in b3["data"]:
+        sid = int(bb["semanticId"])
+        lab = id2label.get(sid, id2label.get(str(sid), ""))
+        if isinstance(lab, dict):
+            lab = lab.get("class") or next(iter(lab.values()), "")
+        out.append({
+            "label": str(lab),
+            "x_min": float(bb["x_min"]), "y_min": float(bb["y_min"]),
+            "z_min": float(bb["z_min"]), "x_max": float(bb["x_max"]),
+            "y_max": float(bb["y_max"]), "z_max": float(bb["z_max"]),
+        })
+    return out
+
+
 # ── 시각화 ────────────────────────────────────────────────────────────────────
 def draw_bboxes(rgb, boxes):
     img  = Image.fromarray(rgb[:, :, :3])
@@ -408,8 +482,8 @@ def us_viz(us_vals, max_r=120):
     return out
 
 
-def make_composite(cam_imgs, ld_img, us_img, fi):
-    W, H = 1280, 800
+def make_composite(cam_imgs, ld_img, us_img, seg_img, depth_img, fi):
+    W, H = 1280, 860
     canvas = Image.new("RGB", (W, H), (20, 20, 20))
     draw = ImageDraw.Draw(canvas)
     for i, name in enumerate(["front", "left", "right", "back"]):
@@ -423,10 +497,19 @@ def make_composite(cam_imgs, ld_img, us_img, fi):
         draw.text((i * 320 + 5, 5), name.upper(), fill=(255, 255, 0))
     canvas.paste(Image.fromarray(ld_img).resize((640, 450)), (0, 185))
     canvas.paste(Image.fromarray(us_img).resize((640, 220)), (640, 185))
-    draw.rectangle([0, 640, W, H], fill=(10, 10, 30))
+
+    # 라벨 패널 (front 세그/깊이)
+    for j, (im, title) in enumerate([(seg_img, "Semantic Seg"),
+                                     (depth_img, "Depth")]):
+        x = 640 + j * 320
+        if im is not None:
+            canvas.paste(Image.fromarray(im).resize((300, 168)), (x + 10, 420))
+        draw.text((x + 10, 405), title, fill=(255, 255, 0))
+
+    draw.rectangle([0, 640, 640, H], fill=(10, 10, 30))
     draw.text((20,  650), f"Frame {fi:02d}/{NUM_FRAMES-1}", fill=(200, 200, 255))
-    draw.text((200, 650), "Speed: 100 km/h", fill=(0, 255, 100))
-    draw.text((420, 650), f"Dist: {fi * DIST_STEP:.1f}m", fill=(255, 200, 0))
+    draw.text((20,  672), "Speed: 100 km/h", fill=(0, 255, 100))
+    draw.text((20,  694), f"Dist: {fi * DIST_STEP:.1f}m", fill=(255, 200, 0))
     return np.array(canvas)
 
 
@@ -462,8 +545,26 @@ for fi in range(NUM_FRAMES):
     # LiDAR / 근접 raycast
     pts = get_lidar_pts(fi)
     us_vals = raycast_us(x, y, z, yaw)
+
+    # 자동 라벨 (front): 세그/인스턴스/깊이/3D박스
+    seg_img = seg_to_rgb(seg_an.get_data())
+    inst_img = seg_to_rgb(inst_an.get_data())
+    depth_raw = depth_an.get_data()
+    depth_img = depth_to_rgb(depth_raw)
+    boxes3d = parse_bbox3d(bbox3d_an.get_data())
+    # 라벨 파일 저장
+    if seg_img is not None:
+        Image.fromarray(seg_img).save(
+            os.path.join(LABELS_DIR, f"frame_{fi:04d}_seg.png"))
+    if inst_img is not None:
+        Image.fromarray(inst_img).save(
+            os.path.join(LABELS_DIR, f"frame_{fi:04d}_inst.png"))
+    if depth_img is not None:
+        Image.fromarray(depth_img).save(
+            os.path.join(LABELS_DIR, f"frame_{fi:04d}_depth.png"))
     log(f"  frame {fi}: lidar={0 if pts is None else len(pts)} "
-        f"prox={[(l, round(v,1)) for l, v in us_vals]}")
+        f"seg={'O' if seg_img is not None else 'X'} "
+        f"bbox3d={len(boxes3d)}")
 
     # JSON
     meta = {
@@ -473,24 +574,26 @@ for fi in range(NUM_FRAMES):
         "speed_kph": 100.0,
         "distance_m": float(fi * DIST_STEP),
         "bbox2d": bbox_json,
+        "bbox3d": boxes3d,
         "lidar_pts": int(len(pts)) if pts is not None else 0,
         "proximity_m": {lbl: float(v) for lbl, v in us_vals},
+        "labels": {
+            "semantic_seg": f"labels/frame_{fi:04d}_seg.png",
+            "instance_seg": f"labels/frame_{fi:04d}_inst.png",
+            "depth": f"labels/frame_{fi:04d}_depth.png",
+        },
     }
     with open(os.path.join(OUTPUT_DIR, f"frame_{fi:04d}.json"), "w",
               encoding="utf-8") as f:
         json.dump(meta, f, indent=2, ensure_ascii=False)
 
     Image.fromarray(
-        make_composite(cam_imgs, lidar_topdown(pts), us_viz(us_vals), fi)
+        make_composite(cam_imgs, lidar_topdown(pts), us_viz(us_vals),
+                       seg_img, depth_img, fi)
     ).save(os.path.join(OUTPUT_DIR, f"frame_{fi:04d}.png"))
     log(f"  frame {fi}: 저장 완료")
   except Exception as e:
     log(f"  frame {fi} 예외: {e}\n{traceback.format_exc()}")
-
-    n_bbox = sum(len(v) for v in bbox_json.values())
-    print(f"  [{fi+1}/{NUM_FRAMES}] cams={len(cam_imgs)} "
-          f"lidar={meta['lidar_pts']}pts bbox={n_bbox} "
-          f"prox={[round(v, 1) for _, v in us_vals]}")
 
 sim_ctx.stop()
 print(f"\n=== 완료: output/frame_0000~{NUM_FRAMES-1:04d}.png/.json ===")
