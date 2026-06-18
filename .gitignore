@@ -9,6 +9,9 @@
 # Generated textures (re-generatable)
 textures/
 
+# Sensor 수집 결과물 (재생성 가능)
+output/
+
 # Python
 __pycache__/
 *.pyc

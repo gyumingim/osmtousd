@@ -14,10 +14,13 @@ from pxr import UsdGeom, UsdLux, UsdPhysics, Gf, Sdf
 import omni
 import omni.kit.commands
 import omni.replicator.core as rep
-from isaacsim.core.utils.stage import open_stage, is_stage_loading
+from isaacsim.core.utils.stage import (
+    open_stage, is_stage_loading, add_reference_to_stage)
 from isaacsim.core.api import SimulationContext
 from isaacsim.sensors.rtx import LidarRtx, get_gmo_data
-from isaacsim.sensors.physx import _range_sensor
+from isaacsim.core.utils.semantics import add_update_semantics
+from isaacsim.storage.native import get_assets_root_path
+from omni.physx import get_physx_scene_query_interface
 
 STAGE_PATH = "/home/karma/OSMtoUSD/gumi.usda"
 OUTPUT_DIR = "/home/karma/OSMtoUSD/output"
@@ -29,6 +32,17 @@ CAM_W, CAM_H = 640, 360
 LIDAR_CONFIG = "Example_Rotary"   # 여러 예제에서 검증된 config
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# 즉시 flush되는 파일 로깅 (Isaac stdout 버퍼링 우회)
+_LOGF = os.path.join(OUTPUT_DIR, "run.log")
+open(_LOGF, "w").close()
+
+
+def log(m):
+    print(m, flush=True)
+    with open(_LOGF, "a", encoding="utf-8") as f:
+        f.write(str(m) + "\n")
+
 
 # ── 1. 씬 직접 로드 ───────────────────────────────────────────────────────────
 print("씬 로드...")
@@ -55,28 +69,55 @@ UsdGeom.XformCommonAPI(sun).SetRotate(
     Gf.Vec3f(-45, 0, 45), UsdGeom.XformCommonAPI.RotationOrderXYZ)
 
 
-# ── 4. 경로 추출 ──────────────────────────────────────────────────────────────
+# ── 4. 경로 추출 — 건물 밀집 구간에서 시작 ───────────────────────────────────
+def _building_centroids():
+    cents = []
+    for grp in ["/World/Buildings", "/World/GeneratedBuildings",
+                "/World/VworldBuildings"]:
+        g = stage.GetPrimAtPath(grp)
+        if g.IsValid():
+            for c in g.GetChildren():
+                pts = c.GetAttribute("points").Get()
+                if pts and len(pts) > 0:
+                    a = np.array(pts)
+                    cents.append([a[:, 0].mean(), a[:, 1].mean()])
+    return np.array(cents) if cents else np.zeros((0, 2))
+
+
 def build_path():
     rg = stage.GetPrimAtPath("/World/RoadGraph")
     if not rg.IsValid():
         return None
-    best, best_len = None, 0.0
+    bcent = _building_centroids()
+
+    # 40m내 건물 최다 도로점이 속한 커브 선택 + 그 지점부터 시작
+    best_curve, best_i, best_cnt = None, 0, -1
     for c in rg.GetChildren():
         pts = c.GetAttribute("points").Get()
         if pts is None or len(pts) < 2:
             continue
-        pts = np.array(pts)
-        seg = np.linalg.norm(np.diff(pts[:, :2], axis=0), axis=1).sum()
-        if seg > best_len:
-            best, best_len = pts, seg
-    if best is None:
+        a = np.array(pts)
+        if len(bcent) == 0:
+            best_curve, best_i = a, 0
+            break
+        for i in range(0, len(a), 2):
+            cnt = int((np.linalg.norm(bcent - a[i, :2], axis=1) < 40).sum())
+            if cnt > best_cnt:
+                best_cnt, best_curve, best_i = cnt, a, i
+    if best_curve is None:
         return None
+    print(f"  밀집 시작: 40m내 건물 {best_cnt}개")
+
+    # 시작점부터 끝까지 경로 (모자라면 처음으로 순환)
+    seg = best_curve[best_i:]
+    if len(seg) < 2:
+        seg = best_curve
     d = np.concatenate([[0], np.cumsum(
-        np.linalg.norm(np.diff(best[:, :2], axis=0), axis=1))])
+        np.linalg.norm(np.diff(seg[:, :2], axis=0), axis=1))])
     s   = np.linspace(0, min(d[-1], DIST_STEP * NUM_FRAMES), NUM_FRAMES + 1)
-    wx  = np.interp(s, d, best[:, 0])
-    wy  = np.interp(s, d, best[:, 1])
-    wz  = np.interp(s, d, best[:, 2]) + 0.5
+    wx  = np.interp(s, d, seg[:, 0])
+    wy  = np.interp(s, d, seg[:, 1])
+    wz  = np.interp(s, d, seg[:, 2]) + 0.5
     dx  = np.diff(wx, append=wx[-1] + (wx[-1] - wx[-2]))
     dy  = np.diff(wy, append=wy[-1] + (wy[-1] - wy[-2]))
     yaw = np.degrees(np.arctan2(dy, dx))
@@ -88,6 +129,58 @@ if waypoints is None:
     waypoints = [(i * DIST_STEP, 0.0, 0.5, 0.0) for i in range(NUM_FRAMES + 1)]
 x0, y0, z0, yaw0 = waypoints[0]
 print(f"경로 {len(waypoints)}개  시작=({x0:.1f}, {y0:.1f})")
+
+
+# ── 4b. 동적 객체(차량/보행자) 배치 + semantics ──────────────────────────────
+ASSETS_ROOT = get_assets_root_path()
+VEHICLE_USD = ASSETS_ROOT + "/Isaac/Props/Forklift/forklift.usd"
+PED_USDS = [
+    ASSETS_ROOT + "/Isaac/People/Characters/"
+    "original_male_adult_construction_01/male_adult_construction_01.usd",
+    ASSETS_ROOT + "/Isaac/People/Characters/F_Business_02/F_Business_02.usd",
+]
+
+
+def spawn_actors(wps):
+    """경로 옆에 실제 차량(지게차)/보행자 에셋 배치 (bbox 라벨용)."""
+    UsdGeom.Xform.Define(stage, "/World/Actors")
+    # (경로인덱스, 측면오프셋 m, 라벨, USD, 추가yaw)
+    plan = [
+        (2,  4.0, "vehicle", VEHICLE_USD, 0),
+        (4, -4.0, "vehicle", VEHICLE_USD, 180),
+        (6,  4.0, "vehicle", VEHICLE_USD, 0),
+        (3,  3.0, "pedestrian", PED_USDS[0], 0),
+        (5, -3.0, "pedestrian", PED_USDS[1], 0),
+    ]
+    n = 0
+    for idx, lat, label, usd, dyaw in plan:
+        if idx >= len(wps):
+            continue
+        x, y, z, yaw = wps[idx]
+        yr = np.radians(yaw)
+        ax = x + np.sin(yr) * lat
+        ay = y - np.cos(yr) * lat
+        p = f"/World/Actors/{label}_{idx}"
+        # 부모 Xform 만들고 그 아래에 에셋 참조 → 내가 트랜스폼 제어
+        parent = UsdGeom.Xform.Define(stage, p)
+        add_reference_to_stage(usd_path=usd, prim_path=p + "/model")
+        api = UsdGeom.XformCommonAPI(parent)
+        api.SetTranslate(Gf.Vec3d(ax, ay, z - 0.5))  # 지면
+        api.SetRotate(Gf.Vec3f(0, 0, yaw + dyaw),
+                      UsdGeom.XformCommonAPI.RotationOrderXYZ)
+        add_update_semantics(parent.GetPrim(), label)
+        n += 1
+    return n
+
+
+n_actors = spawn_actors(waypoints)
+log(f"동적 객체(실모델) {n_actors}개 배치 — 에셋 스트리밍 대기...")
+# 원격 에셋 로딩 대기
+for _ in range(60):
+    app.update()
+    if not is_stage_loading():
+        break
+log("에셋 로딩 완료")
 
 # ── 5. 에고 차량 ──────────────────────────────────────────────────────────────
 ego_path = "/World/EgoVehicle"
@@ -164,31 +257,23 @@ lidar.initialize()
 lidar.attach_annotator("GenericModelOutput")
 print("LiDAR 생성 (OmniLidar)")
 
-# ── 9. Ultrasonic → PhysX LightBeam ×4 (RTX 초음파 config 없음 → 대체) ───────
-ls_iface = _range_sensor.acquire_lightbeam_sensor_interface()
+# ── 9. 근접센서 → PhysX 직접 raycast (검증 완료: 건물까지 실거리) ───────────
+# LightBeam은 OG 노드 의존 + 짧은 range로 부적합 → 순수 raycast로 대체.
+# 각 센서: ego 로컬 오프셋 + 로컬 방향 (매 프레임 yaw로 회전).
+physx_query = get_physx_scene_query_interface()
+# 8방향 근접 레이 (전/후/좌/우 + 4 대각) — 측면 건물도 커버
 US_DEFS = [
-    ("FL", Gf.Vec3d(3,  1, 0.5), Gf.Vec3d(1,  0.4, 0)),
-    ("FR", Gf.Vec3d(3, -1, 0.5), Gf.Vec3d(1, -0.4, 0)),
-    ("RL", Gf.Vec3d(-3, 1, 0.5), Gf.Vec3d(-1, 0.4, 0)),
-    ("RR", Gf.Vec3d(-3,-1, 0.5), Gf.Vec3d(-1,-0.4, 0)),
+    ("F",  (3.0,  0.0, 0.0), (1.0,  0.0, 0.0)),
+    ("B",  (-3.0, 0.0, 0.0), (-1.0, 0.0, 0.0)),
+    ("L",  (0.0,  1.5, 0.0), (0.0,  1.0, 0.0)),
+    ("R",  (0.0, -1.5, 0.0), (0.0, -1.0, 0.0)),
+    ("FL", (2.0,  1.0, 0.0), (1.0,  1.0, 0.0)),
+    ("FR", (2.0, -1.0, 0.0), (1.0, -1.0, 0.0)),
+    ("BL", (-2.0, 1.0, 0.0), (-1.0, 1.0, 0.0)),
+    ("BR", (-2.0,-1.0, 0.0), (-1.0,-1.0, 0.0)),
 ]
-us_paths = []
-for label, trans, fwd in US_DEFS:
-    spath = f"{ego_path}/US_{label}"
-    omni.kit.commands.execute(
-        "IsaacSensorCreateLightBeamSensor",
-        path=f"/US_{label}",
-        parent=ego_path,
-        min_range=0.2,
-        max_range=10.0,
-        translation=trans,
-        orientation=Gf.Quatd(1, 0, 0, 0),
-        forward_axis=fwd,
-        num_rays=3,
-        curtain_length=0.5,
-    )
-    us_paths.append((label, spath))
-print("LightBeam(초음파) 4개 생성")
+US_MAX = 120.0
+print("근접 raycast 4방향 설정 (max 50m)")
 
 # ── 10. 초기화 + 워밍업 ──────────────────────────────────────────────────────
 sim_ctx.reset()
@@ -220,42 +305,72 @@ def get_lidar_pts(fi):
     return None
 
 
-def get_us_dist(label, spath):
-    try:
-        depth = ls_iface.get_linear_depth_data(spath)
-        if depth is not None and len(depth) > 0:
-            arr = np.array(depth).flatten()
-            valid = arr[(arr > 0.2) & (arr < 10.0)]
-            if len(valid) > 0:
-                return float(valid.min())
-    except Exception:
-        pass
-    return 10.0
+def raycast_us(ex, ey, ez, yaw_deg):
+    """ego 포즈 기준 4방향 raycast. (label, dist) 리스트 반환."""
+    yr = np.radians(yaw_deg)
+    cos, sin = np.cos(yr), np.sin(yr)
+    out = []
+    for label, off, d in US_DEFS:
+        ox, oy, oz = off
+        wx = ex + ox * cos - oy * sin
+        wy = ey + ox * sin + oy * cos
+        wz = ez + oz
+        dx = d[0] * cos - d[1] * sin
+        dy = d[0] * sin + d[1] * cos
+        dn = np.array([dx, dy, d[2]])
+        dn = dn / np.linalg.norm(dn)
+        try:
+            hit = physx_query.raycast_closest(
+                [wx, wy, wz], list(dn), US_MAX)
+            if hit and hit.get("hit"):
+                out.append((label, float(hit["distance"])))
+            else:
+                out.append((label, US_MAX))
+        except Exception:
+            out.append((label, US_MAX))
+    return out
+
+
+# ── bbox 파싱 (numpy structured array → dict 리스트) ─────────────────────────
+def parse_bboxes(bbox):
+    out = []
+    if not bbox or "data" not in bbox or len(bbox["data"]) == 0:
+        return out
+    id2label = bbox.get("info", {}).get("idToLabels", {})
+    for bb in bbox["data"]:
+        sid = int(bb["semanticId"])
+        lab = id2label.get(sid, id2label.get(str(sid), ""))
+        if isinstance(lab, dict):
+            lab = lab.get("class") or next(iter(lab.values()), "")
+        out.append({
+            "label": str(lab),
+            "x_min": int(bb["x_min"]), "y_min": int(bb["y_min"]),
+            "x_max": int(bb["x_max"]), "y_max": int(bb["y_max"]),
+        })
+    return out
 
 
 # ── 시각화 ────────────────────────────────────────────────────────────────────
-def draw_bboxes(rgb, bbox):
+def draw_bboxes(rgb, boxes):
     img  = Image.fromarray(rgb[:, :, :3])
     draw = ImageDraw.Draw(img)
-    if bbox and "data" in bbox:
-        for bb in bbox["data"]:
-            draw.rectangle([bb.get("x_min", 0), bb.get("y_min", 0),
-                            bb.get("x_max", 0), bb.get("y_max", 0)],
-                           outline=(0, 255, 0), width=2)
-            lbl = bb.get("semanticLabel", "")
-            if lbl:
-                draw.text((bb["x_min"], max(0, bb["y_min"] - 12)),
-                          lbl, fill=(0, 255, 0))
+    for b in boxes:
+        col = (0, 255, 0) if b["label"] == "vehicle" else (0, 200, 255)
+        draw.rectangle([b["x_min"], b["y_min"], b["x_max"], b["y_max"]],
+                       outline=col, width=2)
+        if b["label"]:
+            draw.text((b["x_min"], max(0, b["y_min"] - 12)),
+                      b["label"], fill=col)
     return np.array(img)
 
 
-def lidar_topdown(pts, max_r=80):
+def lidar_topdown(pts, max_r=120):
     fig, ax = plt.subplots(figsize=(4, 4), facecolor="black")
     ax.set_facecolor("black")
     if pts is not None and len(pts) > 0:
         x, y = pts[:, 0], pts[:, 1]
         dist = np.sqrt(x**2 + y**2)
-        m = dist < max_r
+        m = (dist < max_r) & (dist > 0.5)
         sc = ax.scatter(x[m], y[m], c=dist[m], cmap="jet",
                         s=0.5, vmin=0, vmax=max_r)
         plt.colorbar(sc, ax=ax, label="m")
@@ -272,16 +387,16 @@ def lidar_topdown(pts, max_r=80):
     return out
 
 
-def us_viz(us_vals, max_r=10):
-    labels = [l for l, _ in us_vals]
+def us_viz(us_vals, max_r=120):
+    labels = [lbl for lbl, _ in us_vals]
     vals   = [v for _, v in us_vals]
     fig, ax = plt.subplots(figsize=(4, 2), facecolor="black")
     ax.set_facecolor("black")
-    colors = ["#00ff00" if v < 3 else "#ffff00" if v < 6 else "#ff4444"
+    colors = ["#00ff00" if v < 20 else "#ffff00" if v < 60 else "#ff4444"
               for v in vals]
     bars = ax.barh(labels, vals, color=colors)
     ax.set_xlim(0, max_r)
-    ax.set_title("LightBeam dist (m)", color="white", fontsize=9)
+    ax.set_title("Proximity raycast (m)", color="white", fontsize=9)
     ax.tick_params(colors="white")
     for bar, v in zip(bars, vals):
         ax.text(bar.get_width() + 0.1, bar.get_y() + bar.get_height() / 2,
@@ -316,8 +431,10 @@ def make_composite(cam_imgs, ld_img, us_img, fi):
 
 
 # ── 메인 루프 ─────────────────────────────────────────────────────────────────
-print(f"\n=== 수집 시작: {NUM_FRAMES}프레임 ===")
+import traceback
+log(f"=== 수집 시작: {NUM_FRAMES}프레임 ===")
 for fi in range(NUM_FRAMES):
+  try:
     x, y, z, yaw = waypoints[fi]
     move_ego(x, y, z, yaw)
 
@@ -328,24 +445,25 @@ for fi in range(NUM_FRAMES):
 
     for _ in range(10):
         sim_ctx.step(render=True)
+    log(f"  frame {fi}: 스텝 완료")
 
     # 카메라
     cam_imgs, bbox_json = {}, {}
     for name in _CAM_LOCAL:
         rgb  = rgb_an[name].get_data()
-        bbox = bbox_an[name].get_data()
+        boxes = parse_bboxes(bbox_an[name].get_data())
         if rgb is not None and rgb.size > 0 and rgb.max() > 0:
-            cam_imgs[name] = draw_bboxes(rgb, bbox)
-        if bbox and "data" in bbox:
-            bbox_json[name] = [
-                {"label": b.get("semanticLabel", ""),
-                 "x_min": int(b.get("x_min", 0)), "y_min": int(b.get("y_min", 0)),
-                 "x_max": int(b.get("x_max", 0)), "y_max": int(b.get("y_max", 0))}
-                for b in bbox["data"]]
+            cam_imgs[name] = draw_bboxes(rgb, boxes)
+        if boxes:
+            bbox_json[name] = boxes
+    n_bb = sum(len(v) for v in bbox_json.values())
+    log(f"  frame {fi}: 카메라 {len(cam_imgs)}장 bbox={n_bb}")
 
-    # LiDAR / LightBeam
+    # LiDAR / 근접 raycast
     pts = get_lidar_pts(fi)
-    us_vals = [(lbl, get_us_dist(lbl, sp)) for lbl, sp in us_paths]
+    us_vals = raycast_us(x, y, z, yaw)
+    log(f"  frame {fi}: lidar={0 if pts is None else len(pts)} "
+        f"prox={[(l, round(v,1)) for l, v in us_vals]}")
 
     # JSON
     meta = {
@@ -356,19 +474,23 @@ for fi in range(NUM_FRAMES):
         "distance_m": float(fi * DIST_STEP),
         "bbox2d": bbox_json,
         "lidar_pts": int(len(pts)) if pts is not None else 0,
-        "lightbeam_m": {lbl: float(v) for lbl, v in us_vals},
+        "proximity_m": {lbl: float(v) for lbl, v in us_vals},
     }
-    with open(os.path.join(OUTPUT_DIR, f"frame_{fi:04d}.json"), "w") as f:
+    with open(os.path.join(OUTPUT_DIR, f"frame_{fi:04d}.json"), "w",
+              encoding="utf-8") as f:
         json.dump(meta, f, indent=2, ensure_ascii=False)
 
     Image.fromarray(
         make_composite(cam_imgs, lidar_topdown(pts), us_viz(us_vals), fi)
     ).save(os.path.join(OUTPUT_DIR, f"frame_{fi:04d}.png"))
+    log(f"  frame {fi}: 저장 완료")
+  except Exception as e:
+    log(f"  frame {fi} 예외: {e}\n{traceback.format_exc()}")
 
     n_bbox = sum(len(v) for v in bbox_json.values())
     print(f"  [{fi+1}/{NUM_FRAMES}] cams={len(cam_imgs)} "
           f"lidar={meta['lidar_pts']}pts bbox={n_bbox} "
-          f"lb={[round(v, 1) for _, v in us_vals]}")
+          f"prox={[round(v, 1) for _, v in us_vals]}")
 
 sim_ctx.stop()
 print(f"\n=== 완료: output/frame_0000~{NUM_FRAMES-1:04d}.png/.json ===")
