@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VDS 실시간 대시보드 — 구미</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen">
+<header class="border-b border-slate-700 px-6 py-4 flex justify-between items-center">
+  <div>
+    <h1 class="text-2xl font-bold">VDS 검지기 실시간 대시보드</h1>
+    <p class="text-slate-400 text-sm">15분 단위 교통량 · 이상상황 알림 (구미 도로 노드)</p>
+  </div>
+  <div class="flex items-center gap-3">
+    <label class="text-sm text-slate-400">시간대</label>
+    <select id="hour" class="bg-slate-800 border border-slate-600 rounded px-3 py-1 text-sm"></select>
+    <a href="/" class="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded text-sm">← 카탈로그</a>
+    <a href="/map" class="bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded text-sm">🗺️ 지도</a>
+  </div>
+</header>
+
+<main class="px-6 py-6 max-w-6xl mx-auto">
+  <section id="kpi" class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6"></section>
+  <h2 class="text-lg font-semibold mb-2">⚠️ 이상상황 알림 <span id="alertcount" class="text-slate-400 text-sm"></span></h2>
+  <div class="overflow-auto rounded-lg border border-slate-700">
+    <table class="w-full text-sm">
+      <thead class="bg-slate-800 text-slate-300">
+        <tr><th class="text-left px-3 py-2">노드</th><th class="text-right px-3 py-2">교통량(대/15분)</th><th class="text-right px-3 py-2">Z-score</th><th class="text-left px-3 py-2">상태</th></tr>
+      </thead>
+      <tbody id="alerts"></tbody>
+    </table>
+  </div>
+  <p class="text-xs text-slate-500 mt-3">데이터 출처: 노드 위치=V-World(국토부 표준노드). 교통량=시뮬레이션(실 VDS/ITS API 연동 시 자동 전환). 30초마다 갱신.</p>
+</main>
+
+<script>
+const hs = document.getElementById("hour");
+for (let h=0; h<24; h++) hs.innerHTML += `<option value="${h}" ${h==8?"selected":""}>${h}시</option>`;
+
+async function load() {
+  const hour = hs.value;
+  const d = await fetch(`/api/vds/live?hour=${hour}`).then(r=>r.json());
+  document.getElementById("kpi").innerHTML = `
+    <div class="bg-slate-800 rounded p-3"><div class="text-2xl font-bold">${d.total_nodes}</div><div class="text-xs text-slate-400">검지 노드</div></div>
+    <div class="bg-slate-800 rounded p-3"><div class="text-2xl font-bold text-rose-400">${d.alert_count}</div><div class="text-xs text-slate-400">이상 알림</div></div>
+    <div class="bg-slate-800 rounded p-3"><div class="text-2xl font-bold">${d.interval_min}분</div><div class="text-xs text-slate-400">집계 주기</div></div>
+    <div class="bg-slate-800 rounded p-3"><div class="text-2xl font-bold">${d.hour}시</div><div class="text-xs text-slate-400">기준 시각</div></div>`;
+  document.getElementById("alertcount").textContent = `(${d.alert_count}건)`;
+  const rows = d.alerts.sort((a,b)=>b.zscore-a.zscore).map(a=>`
+    <tr class="border-t border-slate-700 hover:bg-slate-800">
+      <td class="px-3 py-2">${a.name||a.id}</td>
+      <td class="px-3 py-2 text-right font-mono">${a.volume_15min}</td>
+      <td class="px-3 py-2 text-right font-mono text-rose-400">${a.zscore}</td>
+      <td class="px-3 py-2"><span class="text-rose-400">● 혼잡 이상치</span></td>
+    </tr>`).join("");
+  document.getElementById("alerts").innerHTML = rows ||
+    `<tr><td colspan="4" class="px-3 py-6 text-center text-slate-500">이상상황 없음</td></tr>`;
+}
+hs.addEventListener("change", load);
+load();
+setInterval(load, 30000);  // 30초 자동 갱신
+</script>
+</body>
+</html>

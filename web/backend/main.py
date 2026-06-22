@@ -216,5 +216,10 @@ def map_page():
     return _serve("map.html", "<h1>map.html 없음</h1>")
 
 
+@app.get("/vds", response_class=HTMLResponse)
+def vds_page():
+    return _serve("vds.html", "<h1>vds.html 없음</h1>")
+
+
 if os.path.isdir(FRONTEND):
     app.mount("/static", StaticFiles(directory=FRONTEND), name="static")
