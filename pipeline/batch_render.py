@@ -53,13 +53,17 @@ def main():
     else:
         print("=== SKIP_RENDER: 렌더 생략, 검증·패키징만 ===")
 
-    # 후처리: 품질검증 + 패키징
-    print("\n=== 품질 검증 ===", flush=True)
-    qc = subprocess.run([sys.executable, "pipeline/quality_check.py"],
-                        cwd=ROOT).returncode
-    print("\n=== 패키징 ===", flush=True)
-    pk = subprocess.run([sys.executable, "pipeline/packager.py"],
-                        cwd=ROOT).returncode
+    # 후처리: 캘리브 → 궤적 → 품질·라벨검증 → 패키징 → ZIP검증
+    def step(label, *cmd):
+        print(f"\n=== {label} ===", flush=True)
+        return subprocess.run([sys.executable, *cmd], cwd=ROOT).returncode
+
+    step("센서 캘리브 생성", "pipeline/gen_calibration.py", "--datasets")
+    step("궤적 생성", "pipeline/gen_trajectories.py")
+    qc = step("품질 검증", "pipeline/quality_check.py")
+    step("라벨 검증", "pipeline/validate_labels.py")
+    pk = step("패키징", "pipeline/packager.py")
+    step("ZIP 검증", "pipeline/validate_zip.py")
 
     print("\n=== 배치 파이프라인 완료 ===")
     for s, st in report.items():
