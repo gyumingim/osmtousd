@@ -1,12 +1,11 @@
 """
 시나리오 ② — 산업단지 AMR 물류 (TODO 1-F)
 
-구미 1산단 환경에서 AMR 페이스(저속 8km/h) 주행 데이터 수집.
-시나리오①과 동일 엔진(sensor_drive.py)을 저속·주야 변주로 구동.
+구미 1산단 환경에서 실제 AMR 로봇(Idealworks iw.hub) 저속 주행.
+ACTOR_MODE=amr: 이동 작업자 2명(걷기) + 주행 지게차 1대(동적 상호작용).
+EGO_MODEL로 ego에 iw.hub 가시 모델 부착.
 
-[한계/TODO] 전용 AMR 로봇 에셋 없음(ego는 무형 Xform), 지게차/작업자는
-정적 배치(ACTOR_MODE=static). 실제 AMR 모델·창고·로딩독·동적 작업자
-상호작용은 미구현 — Omniverse Warehouse 샘플 연동 시 보강 예정.
+[한계/TODO] 전용 창고·로딩독 환경은 미적용(도로 디지털트윈 위 주행).
 
 Usage:
     python3 scenarios/scenario_02_amr.py
@@ -39,6 +38,8 @@ def run_combo(light, weather):
         ENV_LIGHTING=light,
         ENV_WEATHER=weather,
         SPEED_KPH=AMR_SPEED_KPH,
+        ACTOR_MODE="amr",
+        EGO_MODEL="/Isaac/Robots/Idealworks/iwhub/iw_hub_static.usd",
         OUTPUT_SUBDIR=subdir,
         NUM_FRAMES=NUM_FRAMES,
     )

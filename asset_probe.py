@@ -10,14 +10,16 @@ root = get_assets_root_path()
 out = {"root": root, "dirs": {}}
 
 DIRS = [
-    "/Isaac/People/Characters/original_male_adult_construction_01",
-    "/Isaac/People/Characters/F_Business_02",
-    "/Isaac/People/Characters/original_female_adult_police_01",
+    "/Isaac/Robots",
+    "/Isaac/Props",
+    "/Isaac/People/Characters",
+    "/Isaac/Samples",
+    "/Isaac/Environments",
 ]
 for d in DIRS:
     try:
         res, entries = omni.client.list(root + d)
-        out["dirs"][d] = [e.relative_path for e in entries]
+        out["dirs"][d] = sorted(e.relative_path for e in entries)
     except Exception as e:
         out["dirs"][d] = f"ERR: {e}"
 

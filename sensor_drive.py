@@ -32,7 +32,8 @@ SPEED_MPS  = SPEED_KPH / 3.6
 DT         = 1.0 / 10
 DIST_STEP  = SPEED_MPS * DT
 NUM_FRAMES = int(os.environ.get("NUM_FRAMES", "10"))
-ACTOR_MODE = os.environ.get("ACTOR_MODE", "static")  # static/vru/collision/traffic
+ACTOR_MODE = os.environ.get("ACTOR_MODE", "static")  # static/vru/collision/traffic/amr
+EGO_REACT = os.environ.get("EGO_REACT", "1") == "1"  # 0=전방장애물 무반응(사고)
 CAM_W, CAM_H = 640, 360
 
 LABELS_DIR = os.path.join(OUTPUT_DIR, "labels")
@@ -111,8 +112,8 @@ def build_path():
         return None
     bcent = _building_centroids()
 
-    # traffic 모드는 긴 차로 필요 → 가장 긴 커브. 그 외엔 건물 밀집 구간.
-    if ACTOR_MODE == "traffic":
+    # traffic/collision은 긴 차로 필요 → 가장 긴 커브. 그 외엔 건물 밀집 구간.
+    if ACTOR_MODE in ("traffic", "collision"):
         best_curve, best_i, best_len = None, 0, -1.0
         for c in rg.GetChildren():
             pts = c.GetAttribute("points").Get()
@@ -184,11 +185,16 @@ print(f"경로 {len(waypoints)}개  시작=({x0:.1f}, {y0:.1f})")
 
 # ── 4b. 동적 객체(차량/보행자) 배치 + semantics ──────────────────────────────
 ASSETS_ROOT = get_assets_root_path()
+# 산단(공장) 맥락이라 차량=지게차가 적절(에셋서버에 승용차·자전거 에셋 없음).
 VEHICLE_USD = ASSETS_ROOT + "/Isaac/Props/Forklift/forklift.usd"
+_PCHAR = ASSETS_ROOT + "/Isaac/People/Characters/"
+# 실제 캐릭터 변종 다양화 (반복 2종 → 작업자/사무/의료 5종)
 PED_USDS = [
-    ASSETS_ROOT + "/Isaac/People/Characters/"
-    "original_male_adult_construction_01/male_adult_construction_01.usd",
-    ASSETS_ROOT + "/Isaac/People/Characters/F_Business_02/F_Business_02.usd",
+    _PCHAR + "original_male_adult_construction_01/male_adult_construction_01.usd",
+    _PCHAR + "original_male_adult_construction_02/male_adult_construction_02.usd",
+    _PCHAR + "F_Business_02/F_Business_02.usd",
+    _PCHAR + "original_female_adult_police_01/female_adult_police_01.usd",
+    _PCHAR + "original_male_adult_medical_01/male_adult_medical_01.usd",
 ]
 
 
@@ -250,19 +256,18 @@ def _spawn_vru(wps):
 
 
 def _spawn_collision(wps):
-    """경로 옆 고장차(갓길) + 측면 교차 진입차량 → 충돌 코스(경로 비중첩)."""
-    idx = min(len(wps) - 1, max(1, int(NUM_FRAMES * 0.7)))
-    x, y, z, yaw = wps[idx]
-    yr = np.radians(yaw)
+    """전방 차로 위 고장차(arc-length 10m) + 측면 교차 진입차량 → 실제 충돌 코스.
+    ego는 s=0에서 접근 → 무반응(사고)이면 충돌, 제동(회피)이면 정지."""
+    sx, sy, sz, syaw = lane_at(10.0)        # 전방 10m 차로 위
+    yr = np.radians(syaw)
     left = np.array([-np.sin(yr), np.cos(yr)])
-    # 정지 고장차: 경로에서 2.5m 옆 (ego 비중첩, 근접 통과)
-    sp = np.array([x, y]) + left * 2.5
+    sp = np.array([sx, sy]) + left * 0.6    # 차로 점유(0.6m 치우침)
     _make_actor("/World/Actors/stalled_veh", VEHICLE_USD,
-                float(sp[0]), float(sp[1]), z - 0.5, yaw,
+                float(sp[0]), float(sp[1]), sz - 0.5, syaw,
                 "vehicle", 0.0, 0.0, "stalled")
-    # 측면 교차 진입차량: 전방 중간지점 옆에서 경로로 합류
-    mx, my, mz, myaw = wps[min(len(wps) - 1, NUM_FRAMES // 2)]
-    s = np.array([mx, my]) + left * 10
+    # 측면 교차 진입차량: 전방 7m 옆에서 차로로 합류
+    mx, my, mz, _ = lane_at(7.0)
+    s = np.array([mx, my]) + left * 9
     vel = -left / (np.linalg.norm(left) + 1e-9) * 5.0
     head = float(np.degrees(np.arctan2(vel[1], vel[0])))
     _make_actor("/World/Actors/crossing_veh", VEHICLE_USD,
@@ -394,9 +399,31 @@ def accumulate_v2x(fi, ex, ey, eyaw, sig):
             _V2X.append(rec)
 
 
+def _spawn_amr(wps):
+    """AMR 산단: 이동 작업자 2명(걷기) + 주행 지게차 1대 — 전부 동적."""
+    x0_, y0_, z0_, yaw0_ = wps[0]
+    yr = np.radians(yaw0_)
+    fwd = np.array([np.cos(yr), np.sin(yr)])
+    left = np.array([-np.sin(yr), np.cos(yr)])
+    base = np.array([x0_, y0_]) + fwd * 12
+    for i, (off, vd, spd) in enumerate([(6.0, -left, 1.3), (-5.0, left, 1.1)]):
+        s = base + left * off
+        v = vd / (np.linalg.norm(vd) + 1e-9) * spd
+        _make_actor(f"/World/Actors/worker_{i}", PED_USDS[i % len(PED_USDS)],
+                    float(s[0]), float(s[1]), z0_ - 0.5,
+                    float(np.degrees(np.arctan2(v[1], v[0]))),
+                    "pedestrian", float(v[0]), float(v[1]), "worker")
+    fs = base + fwd * 8 + left * 4
+    fv = -left * 1.5
+    _make_actor("/World/Actors/forklift_amr", VEHICLE_USD,
+                float(fs[0]), float(fs[1]), z0_ - 0.5,
+                float(np.degrees(np.arctan2(fv[1], fv[0]))),
+                "vehicle", float(fv[0]), float(fv[1]), "forklift_moving")
+
+
 def spawn_actors(wps):
     UsdGeom.Xform.Define(stage, "/World/Actors")
-    {"vru": _spawn_vru, "collision": _spawn_collision,
+    {"vru": _spawn_vru, "collision": _spawn_collision, "amr": _spawn_amr,
      "traffic": _spawn_traffic}.get(ACTOR_MODE, _spawn_static)(wps)
     return len(_ACTORS)
 
@@ -439,11 +466,16 @@ def move_actors():
 
 # ── ego 폐루프 종방향 주행 (차로 추종 + 신호/전방장애물 반응) ────────────────
 _ego = {"s": 0.0, "v": 0.0}   # 차로 arc-length, 속도(m/s)
+_collision = {"hit": False}   # 실제 접촉 발생 시 충돌 이벤트 기록
 
 
 def ego_step(sig_state):
     """ego가 차로를 따라 주행하며 적색신호·전방차량/보행자에 감속/정지.
-    반환: (x, y, z, yaw, v)."""
+    충돌 후엔 정지. 반환: (x, y, z, yaw, v, reason)."""
+    if _collision["hit"]:                   # 충돌 후 정지(post-impact)
+        _ego["v"] = 0.0
+        x, y, z, yaw = lane_at(_ego["s"])
+        return x, y, z + 0.5, yaw, 0.0, "collided"
     ex, ey, ez, eyaw = lane_at(_ego["s"])
     yr = np.radians(eyaw)
     fx, fy = np.cos(yr), np.sin(yr)        # 진행방향
@@ -456,16 +488,18 @@ def ego_step(sig_state):
             vt = min(vt, max(0.0, d))
             reason = "signal"
     # 2) 전방 장애물 (V2V/충돌회피) — 차로폭 내 가장 가까운 앞 객체
-    fwd_min = 1e9
-    for a in _ACTORS:
-        rx, ry = a["x"] - ex, a["y"] - ey
-        fd = rx * fx + ry * fy             # 전방 투영거리
-        lat = abs(-rx * fy + ry * fx)      # 측면 이격
-        if fd > 0 and lat < 2.8 and fd < fwd_min:
-            fwd_min = fd
-    if fwd_min < 18.0:                      # 18m 내 전방 차량/보행자
-        vt = min(vt, max(0.0, fwd_min - 6.0))   # 6m 앞 정지
-        reason = "lead" if reason == "cruise" else reason
+    #    EGO_REACT=0이면 무반응(돌진) → 사고. 기본=제동(회피).
+    if EGO_REACT:
+        fwd_min = 1e9
+        for a in _ACTORS:
+            rx, ry = a["x"] - ex, a["y"] - ey
+            fd = rx * fx + ry * fy             # 전방 투영거리
+            lat = abs(-rx * fy + ry * fx)      # 측면 이격
+            if fd > 0 and lat < 2.8 and fd < fwd_min:
+                fwd_min = fd
+        if fwd_min < 18.0:                      # 18m 내 전방 차량/보행자
+            vt = min(vt, max(0.0, fwd_min - 6.0))   # 6m 앞 정지
+            reason = "lead" if reason == "cruise" else reason
     # 가감속 (±)
     ACC, DEC = 3.0, 6.0
     dv = vt - _ego["v"]
@@ -487,6 +521,12 @@ log("에셋 로딩 완료")
 # ── 5. 에고 차량 ──────────────────────────────────────────────────────────────
 ego_path = "/World/EgoVehicle"
 ego_prim = UsdGeom.Xform.Define(stage, ego_path)
+# 가시 ego 모델(예: AMR iw.hub) — EGO_MODEL 환경변수로 지정 시 부착
+_EGO_MODEL = os.environ.get("EGO_MODEL", "")
+if _EGO_MODEL:
+    add_reference_to_stage(usd_path=ASSETS_ROOT + _EGO_MODEL,
+                           prim_path=ego_path + "/model")
+    print(f"ego 가시 모델: {_EGO_MODEL}")
 
 
 def move_ego(x, y, z, yaw_deg):
@@ -813,21 +853,27 @@ def depth_to_rgb(depth, max_m=60.0):
 
 
 def parse_bbox3d(b3):
+    """3D bbox: 로컬 AABB extent + 월드 변환(4x4). transform 있어야 3D검출 사용가능."""
     out = []
     if not b3 or "data" not in b3 or len(b3["data"]) == 0:
         return out
     id2label = b3.get("info", {}).get("idToLabels", {})
+    names = b3["data"].dtype.names if hasattr(b3["data"], "dtype") else ()
     for bb in b3["data"]:
         sid = int(bb["semanticId"])
         lab = id2label.get(sid, id2label.get(str(sid), ""))
         if isinstance(lab, dict):
             lab = lab.get("class") or next(iter(lab.values()), "")
-        out.append({
+        rec = {
             "label": str(lab),
             "x_min": float(bb["x_min"]), "y_min": float(bb["y_min"]),
             "z_min": float(bb["z_min"]), "x_max": float(bb["x_max"]),
             "y_max": float(bb["y_max"]), "z_max": float(bb["z_max"]),
-        })
+        }
+        if "transform" in names:          # 월드 포즈(회전+위치) 4x4
+            rec["transform"] = np.asarray(bb["transform"],
+                                          dtype=float).reshape(4, 4).tolist()
+        out.append(rec)
     return out
 
 
@@ -946,6 +992,16 @@ for fi in range(NUM_FRAMES):
     # ego 속도 벡터 (실제 이동량) → TTC 계산
     ego_vx, ego_vy = (x - px) / DT, (y - py) / DT
     ttc, ttc_rng, ttc_phase = compute_ttc(x, y, ego_vx, ego_vy)
+    # 실제 접촉 감지 (collision 모드) → 충돌 이벤트 1회 기록 + 전원 정지
+    if (ACTOR_MODE == "collision" and not _collision["hit"]
+            and ttc_rng is not None and ttc_rng <= 2.5):
+        near = min(_ACTORS, key=lambda a: np.hypot(a["x"] - x, a["y"] - y))
+        _collision.update(hit=True, frame=fi, impact_kph=round(ego_spd * 3.6, 1),
+                          min_range_m=ttc_rng, actor=near["behavior"])
+        for a in _ACTORS:
+            a["vx"] = a["vy"] = 0.0
+        log(f"  *** 충돌! frame {fi} {near['behavior']} "
+            f"@ {_collision['impact_kph']}km/h")
     log(f"  frame {fi}: ego v={ego_spd:.1f}m/s ({ego_reason})")
 
     for name in _CAM_LOCAL:
@@ -1017,6 +1073,7 @@ for fi in range(NUM_FRAMES):
                     "x": round(float(a["x"]), 2), "y": round(float(a["y"]), 2),
                     "yaw": round(float(a["yaw"]), 1)} for a in _ACTORS],
         "ttc": {"ttc_s": ttc, "min_range_m": ttc_rng, "phase": ttc_phase},
+        "collision_event": dict(_collision) if _collision["hit"] else None,
         "signal": sig_state,
         "lidar_pts": int(len(pts)) if pts is not None else 0,
         "proximity_m": {lbl: float(v) for lbl, v in us_vals},
