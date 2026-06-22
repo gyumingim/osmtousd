@@ -16,9 +16,19 @@
 | 5종 시나리오 구현 | ✅ 완료 | `scenarios/scenario_0[1-5]_*.py` |
 | 슈퍼컴 배치 렌더링 파이프라인 | ✅ 완료 | `pipeline/`, `supercomp/` (SLURM 템플릿) |
 | 웹 플랫폼 (FastAPI + 정적 포털) | ✅ 완료 | `web/` (React 대신 정적 SPA) |
+| 멀티센서 (카메라4·LiDAR·Radar·초음파) | ✅ 완료 | 전부 PhysX raycast 기반(RTX센서 미명중 대체) |
+| 자동라벨 (2D/3D bbox·세그·깊이·궤적) | ✅ 완료 | 3D bbox에 world transform 포함 |
+| 실제 차량/이륜차 에셋 | ✅ 대부분 | 승용차·트럭(Kenney CC0)·버스·자전거(Poly CC-BY), 오토바이만 프록시 |
+| 기상 6종 (맑음/흐림/비/눈/안개/야간호우) | ✅ 완료 | `environment/weather.py` + LiDAR 강수감쇠 |
+| 센서 캘리브레이션 자동생성 | ✅ 완료 | `pipeline/gen_calibration.py`, `sensors/sensor_config.py` |
+| 검증도구 (라벨·데이터셋·ZIP) | ✅ 완료 | `validate_labels/validate_zip/quality_check` |
+| 파라미터 조합 생성기 | ✅ 완료 | `pipeline/run_scenario.py` |
 
-> 진행 메모: 기능 전반 구현·검증 완료. 미해결: Radar(빌드버그 스킵), 실모델 LiDAR(에셋서버 이름),
-> 시나리오 대량생성 1만 프레임(소량 검증만 — `NUM_FRAMES`로 확장), 슈퍼컴 실계정 연계.
+> 진행 메모(갱신): 기능 전반 구현·검증 완료. **남은 격차**:
+> ① 대량생성 1만 프레임 — 코드는 준비(`run_scenario.py`), 실행만 필요
+> ② 골격 Pose 라벨(UsdSkel), 오토바이 실모델, 보행자 걷기 애니(omni.anim.people)
+> ③ 외부·인프라 의존(코드밖): 실 VDS(ITS API키), 기업 PoC, PostgreSQL, 슈퍼컴 실계정
+> 주의: Isaac Sim 동시 2개 실행 금지(GPU 14GB 한계 → ACPI gpe17 폭주 경험).
 
 ---
 
