@@ -231,11 +231,12 @@ _VEH_CFG = {
               "scale": (1.2, 1.12, 1.73), "rx": 90.0, "rz": 90.0},
     "bus":   {"files": ["bus"],          # Poly Pizza CC-BY, 이미 Z-up
               "scale": (0.05, 0.066, 0.076), "rx": 0.0, "rz": 90.0},
+    "bicycle": {"files": ["bicycle"],    # Poly Pizza CC-BY, 직립·길이=X
+                "scale": (0.0047, 0.0047, 0.0047), "rx": 0.0, "rz": 0.0},
 }
-# 오토바이·자전거: 쓸만한 CC0 실모델 부재 → 박스 프록시(2륜 실루엣). 라벨은 정확.
+# 오토바이: 쓸만한 CC0 실모델 부재(받은 것 자세 불안정) → 박스 프록시(2륜 실루엣).
 _PROXY_TYPES = {
     "motorcycle": ((2.1, 0.5, 0.95), None, (0.10, 0.10, 0.12)),
-    "bicycle":    ((1.7, 0.35, 1.05), None, (0.75, 0.20, 0.20)),
 }
 import random as _rnd
 _rnd.seed(7)

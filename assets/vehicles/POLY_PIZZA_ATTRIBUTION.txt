@@ -6,3 +6,8 @@ Poly Pizza 3D models (used under their stated licenses):
   Credit: "Bus" by Poly by Google, via Poly Pizza, licensed under CC-BY 3.0
 
 CC-BY requires attribution. Keep this credit with any distribution.
+
+- Bicycle — "Bicycle" by Poly by Google
+  Source: https://poly.pizza/m/19VoUuA2pcN
+  License: Creative Commons Attribution (CC-BY 3.0)
+  Credit: "Bicycle" by Poly by Google, via Poly Pizza, licensed under CC-BY 3.0
