@@ -1,5 +1,5 @@
 from isaacsim import SimulationApp
-# enable_motion_bvh: RTX 센서가 씬을 트레이스하는 가속구조 — 필수
+# 센서는 PhysX raycast 기반(RTX 센서 미사용). motion_bvh는 무해하게 유지.
 app = SimulationApp({"headless": True, "enable_motion_bvh": True})
 
 import os
@@ -34,7 +34,6 @@ DIST_STEP  = SPEED_MPS * DT
 NUM_FRAMES = int(os.environ.get("NUM_FRAMES", "10"))
 ACTOR_MODE = os.environ.get("ACTOR_MODE", "static")  # static/vru/collision/traffic
 CAM_W, CAM_H = 640, 360
-LIDAR_CONFIG = "Example_Rotary"   # 여러 예제에서 검증된 config
 
 LABELS_DIR = os.path.join(OUTPUT_DIR, "labels")
 os.makedirs(LABELS_DIR, exist_ok=True)
@@ -293,7 +292,7 @@ def signal_phase(t):
 
 
 def _spawn_traffic(wps):
-    """기능형 신호등(색 변화) + 신호 뒤 줄서는 주행차량 3대 (차로 길이 적응)."""
+    """기능형 신호등(색 변화) + 선행차(적색정지) 1 + 통과차 2 (ego가 추종)."""
     global _SIGNAL, SIG_S
     lane_len = float(_LANE_CUM[-1])
     SIG_S = min(45.0, lane_len * 0.85)        # 신호 정지선
@@ -586,7 +585,7 @@ US_DEFS = [
     ("BR", (-2.0,-1.0, 0.0), (-1.0,-1.0, 0.0)),
 ]
 US_MAX = 120.0
-print("근접 raycast 4방향 설정 (max 50m)")
+print(f"근접 raycast {len(US_DEFS)}방향 설정 (max {US_MAX:.0f}m)")
 
 # ── 10. 초기화 + 워밍업 ──────────────────────────────────────────────────────
 sim_ctx.reset()
@@ -916,11 +915,18 @@ def make_composite(cam_imgs, ld_img, us_img, seg_img, depth_img, fi):
 
     draw.rectangle([0, 640, 640, H], fill=(10, 10, 30))
     draw.text((20,  650), f"Frame {fi:02d}/{NUM_FRAMES-1}", fill=(200, 200, 255))
-    draw.text((20,  672), f"Speed: {SPEED_KPH:.0f} km/h", fill=(0, 255, 100))
-    draw.text((20,  694), f"Dist: {fi * DIST_STEP:.1f}m", fill=(255, 200, 0))
+    # 실측 ego 속도·행동 (폐루프 주행)
+    draw.text((20,  672), f"Speed: {_HUD['spd']:.0f} km/h ({_HUD['act']})",
+              fill=(0, 255, 100))
+    draw.text((20,  694), f"Dist: {_HUD['dist']:.1f}m", fill=(255, 200, 0))
     draw.text((220, 650), f"Light: {LIGHTING}", fill=(255, 220, 120))
     draw.text((220, 672), f"Weather: {WEATHER}", fill=(150, 200, 255))
+    if _HUD.get("sig"):
+        draw.text((220, 694), f"Signal: {_HUD['sig']}", fill=(255, 120, 120))
     return np.array(canvas)
+
+
+_HUD = {"spd": 0.0, "act": "", "dist": 0.0, "sig": ""}
 
 
 # ── 메인 루프 ─────────────────────────────────────────────────────────────────
@@ -1034,6 +1040,8 @@ for fi in range(NUM_FRAMES):
               encoding="utf-8") as f:
         yaml.safe_dump(meta, f, allow_unicode=True, sort_keys=False)
 
+    _HUD.update(spd=ego_spd * 3.6, act=ego_reason, dist=float(_ego["s"]),
+                sig=sig_state["phase"] if sig_state else "")
     Image.fromarray(
         make_composite(cam_imgs, lidar_topdown(pts), us_viz(us_vals),
                        seg_img, depth_img, fi)

@@ -1,10 +1,12 @@
 """
 시나리오 ② — 산업단지 AMR 물류 (TODO 1-F)
 
-구미 1산단 환경에서 AMR(자율이동로봇) 저속 주행 + 작업자·지게차 상호작용.
-시나리오①과 동일 엔진(sensor_drive.py)을 AMR 파라미터로 구동.
+구미 1산단 환경에서 AMR 페이스(저속 8km/h) 주행 데이터 수집.
+시나리오①과 동일 엔진(sensor_drive.py)을 저속·주야 변주로 구동.
 
-핵심 차이: 저속(AMR 페이스) + 작업자/지게차 동적객체(이미 배치됨).
+[한계/TODO] 전용 AMR 로봇 에셋 없음(ego는 무형 Xform), 지게차/작업자는
+정적 배치(ACTOR_MODE=static). 실제 AMR 모델·창고·로딩독·동적 작업자
+상호작용은 미구현 — Omniverse Warehouse 샘플 연동 시 보강 예정.
 
 Usage:
     python3 scenarios/scenario_02_amr.py
