@@ -18,7 +18,6 @@ import omni.replicator.core as rep
 from isaacsim.core.utils.stage import (
     open_stage, is_stage_loading, add_reference_to_stage)
 from isaacsim.core.api import SimulationContext
-from isaacsim.sensors.rtx import LidarRtx, get_gmo_data
 from isaacsim.core.utils.semantics import add_update_semantics
 from isaacsim.storage.native import get_assets_root_path
 from omni.physx import get_physx_scene_query_interface
@@ -501,17 +500,13 @@ try:
 except Exception:
     pass
 
-# ── 8. LiDAR — 공식 패턴: LidarRtx 직접 생성 → OmniLidar 프림 ────────────────
-lidar = LidarRtx(
-    prim_path=ego_path + "/Lidar",
-    name="lidar",
-    translation=np.array([0.0, 0.0, 2.2]),
-    orientation=np.array([1.0, 0.0, 0.0, 0.0]),
-    config_file_name=LIDAR_CONFIG,
-)
-lidar.initialize()
-lidar.attach_annotator("GenericModelOutput")
-print("LiDAR 생성 (OmniLidar)")
+# ── 8. LiDAR — PhysX raycast 점구름 (RTX LiDAR는 gumi 지오메트리 미명중 → 대체)
+# RTX Example_Rotary/HESAI 모두 레이가 씬을 거의 못 맞춰 non-return만 나옴.
+# raycast는 건물/도로를 실거리로 맞히므로 360°×다채널로 진짜 점구름 생성.
+LIDAR_CH = (-15, -11, -8, -5, -3, -1, 0, 1, 2, 4, 7, 11)  # 수직 채널(도)
+LIDAR_AZ = 200       # 수평 분해능
+LIDAR_MAX = 100.0
+print("LiDAR: PhysX raycast 점구름 (200az x 12ch)")
 
 # ── 9. 근접센서 → PhysX 직접 raycast (검증 완료: 건물까지 실거리) ───────────
 # LightBeam은 OG 노드 의존 + 짧은 range로 부적합 → 순수 raycast로 대체.
@@ -540,25 +535,25 @@ for _ in range(30):
 print("워밍업 완료")
 
 
-# ── 파싱 ──────────────────────────────────────────────────────────────────────
-def get_lidar_pts(fi):
-    frame = lidar.get_current_frame()
-    if fi == 0:
-        print(f"  [LiDAR keys]: {list(frame.keys())}")
-    data = frame.get("GenericModelOutput")
-    if data is None or len(data) == 0:
-        return None
-    try:
-        gmo = get_gmo_data(data)
-        x = np.array(gmo.x)
-        y = np.array(gmo.y)
-        z = np.array(gmo.z)
-        if len(x) > 0:
-            return np.stack([x, y, z], axis=1)
-    except Exception as e:
-        if fi == 0:
-            print(f"  [LiDAR parse err]: {e}")
-    return None
+# ── LiDAR: 360°×다채널 raycast → 센서-로컬 점구름 (x 전방, y 좌) ─────────────
+def get_lidar_pts(ex, ey, ez, yaw_deg):
+    yr = np.radians(yaw_deg)
+    cy, sy = np.cos(yr), np.sin(yr)
+    sz = ez + 2.2                       # 센서 높이
+    chans = [(np.cos(np.radians(e)), np.sin(np.radians(e))) for e in LIDAR_CH]
+    pts = []
+    for ai in range(LIDAR_AZ):
+        az = 2.0 * np.pi * ai / LIDAR_AZ      # 로컬 방위(0=전방)
+        ca, sa = np.cos(az), np.sin(az)
+        for che, she in chans:
+            lx, ly, lz = ca * che, sa * che, she    # 로컬 방향
+            wx, wy = lx * cy - ly * sy, lx * sy + ly * cy   # 월드 방향
+            h = physx_query.raycast_closest([ex, ey, sz], [wx, wy, lz],
+                                            LIDAR_MAX)
+            if h and h.get("hit"):
+                d = h["distance"]
+                pts.append((lx * d, ly * d, lz * d))   # 센서-로컬 점
+    return np.array(pts, dtype=np.float32) if pts else None
 
 
 # 악천후 센서 성능 저하 (비/안개 → LiDAR 노이즈 + 포인트 드롭)
@@ -875,7 +870,7 @@ for fi in range(NUM_FRAMES):
     log(f"  frame {fi}: 카메라 {len(cam_imgs)}장 bbox={n_bb}")
 
     # LiDAR / 근접 raycast / Radar / Ultrasonic
-    pts = degrade_lidar(get_lidar_pts(fi))
+    pts = degrade_lidar(get_lidar_pts(x, y, z, yaw))
     us_vals = raycast_us(x, y, z, yaw)
     radar_rows = sense_radar(x, y, z, yaw)
     us_rows = sense_ultrasonic(x, y, z, yaw)
