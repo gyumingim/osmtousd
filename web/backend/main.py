@@ -144,6 +144,35 @@ def intersections(junction_only: bool = True):
     return {"count": len(out), "intersections": out}
 
 
+@app.get("/api/intersections/heatmap")
+def heatmap(hour: int = None):
+    """교차로 혼잡도 히트맵 (시간대별 교통량 시뮬 + Z-score 이상치)."""
+    from . import traffic
+    return traffic.simulate_volume(hour)
+
+
+@app.get("/api/vds/live")
+def vds_live(hour: int = None):
+    """VDS 검지기 15분 단위 실시간(시뮬) — 이상상황 알림 포함."""
+    from . import traffic
+    sim = traffic.simulate_volume(hour)
+    alerts = [{"id": n["id"], "name": n["name"],
+               "volume_15min": n["volume_15min"], "zscore": n["zscore"]}
+              for n in sim["nodes"] if n["outlier"]]
+    return {"hour": sim["hour"], "interval_min": 15,
+            "total_nodes": sim["count"], "alerts": alerts,
+            "alert_count": len(alerts)}
+
+
+@app.post("/api/routes/optimize-with-traffic")
+@app.get("/api/routes/optimize-with-traffic")
+def optimize_route(start_id: str, end_id: str, hour: int = None,
+                   avoid_outliers: bool = True):
+    """교통량 기반 경로 최적화 (혼잡·이상치 교차로 회피 옵션)."""
+    from . import traffic
+    return traffic.optimize_route(start_id, end_id, hour, avoid_outliers)
+
+
 @app.get("/api/traffic_signals")
 def traffic_signals():
     """신호등 위치 (WGS84)."""

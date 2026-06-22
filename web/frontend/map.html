@@ -23,11 +23,16 @@
 <div id="panel">
   <h2>구미 1산단 교차로 지도</h2>
   <div id="stats">로딩…</div>
-  <div class="legend" style="margin-top:8px">
-    <div><span style="background:#ef4444"></span>교차로</div>
-    <div><span style="background:#f59e0b"></span>입체/회전/연결</div>
-    <div><span style="background:#3b82f6"></span>신호등</div>
+  <div style="margin-top:10px">
+    <button id="btn-node" onclick="setMode('node')"
+      style="background:#334155;color:#e2e8f0;border:none;border-radius:4px;padding:4px 8px;cursor:pointer">노드유형</button>
+    <button id="btn-heat" onclick="setMode('heat')"
+      style="background:#334155;color:#e2e8f0;border:none;border-radius:4px;padding:4px 8px;cursor:pointer">혼잡도</button>
+    <select id="hour" onchange="if(MODE=='heat')setMode('heat')"
+      style="background:#0f172a;color:#e2e8f0;border:1px solid #475569;border-radius:4px;padding:3px">
+    </select>
   </div>
+  <div class="legend" style="margin-top:8px" id="legend"></div>
   <div style="margin-top:8px"><a href="/">← 데이터셋 카탈로그</a></div>
 </div>
 <script>
@@ -36,30 +41,58 @@ const TYPE_COLOR = { "102":"#ef4444", "103":"#f59e0b", "104":"#f59e0b",
 const map = L.map("map").setView([36.115, 128.36], 13);
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
   { attribution:"© OpenStreetMap", maxZoom:19 }).addTo(map);
+let MODE = "node", LAYER = L.layerGroup().addTo(map);
 
-async function load() {
-  const [ix, sg] = await Promise.all([
-    fetch("/api/intersections").then(r=>r.json()),
-    fetch("/api/traffic_signals").then(r=>r.json()),
-  ]);
-  const byType = {};
-  ix.intersections.forEach(n => {
-    byType[n.type_name] = (byType[n.type_name]||0)+1;
-    L.circleMarker([n.lat, n.lon], {
-      radius:5, color:TYPE_COLOR[n.type]||"#f59e0b",
-      fillOpacity:0.8, weight:1
-    }).bindPopup(`<b>${n.type_name}</b><br>${n.name||n.id}`).addTo(map);
-  });
-  sg.signals.forEach(s => {
-    L.circleMarker([s.lat, s.lon], {
-      radius:4, color:"#3b82f6", fillOpacity:0.9, weight:1
-    }).bindPopup("신호등 "+s.id).addTo(map);
-  });
-  document.getElementById("stats").innerHTML =
-    `교차로/특수노드 <b>${ix.count}</b>개 · 신호등 <b>${sg.count}</b>개<br>` +
-    Object.entries(byType).map(([k,v])=>`${k}: ${v}`).join(" · ");
+// 시간 셀렉터 채우기
+const hs = document.getElementById("hour");
+for (let h=0; h<24; h++) hs.innerHTML += `<option value="${h}" ${h==8?"selected":""}>${h}시</option>`;
+
+function congColor(c){ // 0(초록)~1(빨강)
+  const r = Math.round(255*Math.min(1,c*2)), g = Math.round(255*Math.min(1,(1-c)*2));
+  return `rgb(${r},${g},80)`;
 }
-load();
+
+async function setMode(m){
+  MODE = m; LAYER.clearLayers();
+  document.getElementById("btn-node").style.outline = m=="node"?"2px solid #34d399":"none";
+  document.getElementById("btn-heat").style.outline = m=="heat"?"2px solid #34d399":"none";
+  if (m=="node") {
+    const [ix, sg] = await Promise.all([
+      fetch("/api/intersections").then(r=>r.json()),
+      fetch("/api/traffic_signals").then(r=>r.json()),
+    ]);
+    const byType={};
+    ix.intersections.forEach(n=>{
+      byType[n.type_name]=(byType[n.type_name]||0)+1;
+      L.circleMarker([n.lat,n.lon],{radius:5,color:TYPE_COLOR[n.type]||"#f59e0b",fillOpacity:0.8,weight:1})
+        .bindPopup(`<b>${n.type_name}</b><br>${n.name||n.id}`).addTo(LAYER);
+    });
+    sg.signals.forEach(s=>L.circleMarker([s.lat,s.lon],{radius:4,color:"#3b82f6",fillOpacity:0.9,weight:1})
+      .bindPopup("신호등 "+s.id).addTo(LAYER));
+    document.getElementById("stats").innerHTML=`교차로/특수노드 <b>${ix.count}</b>개 · 신호등 <b>${sg.count}</b>개`;
+    document.getElementById("legend").innerHTML=
+      `<div><span style="background:#ef4444"></span>교차로</div>
+       <div><span style="background:#f59e0b"></span>입체/회전/연결</div>
+       <div><span style="background:#3b82f6"></span>신호등</div>`;
+  } else {
+    const hour = document.getElementById("hour").value;
+    const d = await fetch(`/api/intersections/heatmap?hour=${hour}`).then(r=>r.json());
+    d.nodes.forEach(n=>{
+      L.circleMarker([n.lat,n.lon],{
+        radius: n.outlier?10:6, color: n.outlier?"#ffffff":congColor(n.congestion),
+        weight: n.outlier?2:1, fillColor:congColor(n.congestion), fillOpacity:0.85
+      }).bindPopup(`<b>${n.name||n.id}</b><br>교통량 ${n.volume_15min}/15분<br>Z=${n.zscore} ${n.outlier?"⚠️이상치":""}`).addTo(LAYER);
+    });
+    const out = d.nodes.filter(n=>n.outlier).length;
+    document.getElementById("stats").innerHTML=`${hour}시 혼잡도 · 평균 ${d.mean}/15분 · <b style="color:#fca5a5">이상치 ${out}개</b>`;
+    document.getElementById("legend").innerHTML=
+      `<div><span style="background:rgb(80,255,80)"></span>원활</div>
+       <div><span style="background:rgb(255,200,80)"></span>보통</div>
+       <div><span style="background:rgb(255,40,80)"></span>혼잡</div>
+       <div><span style="background:#fff;border:1px solid #999"></span>Z-score 이상치</div>`;
+  }
+}
+setMode("node");
 </script>
 </body>
 </html>
