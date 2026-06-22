@@ -239,12 +239,13 @@ def _spawn_vru(wps):
     yr = np.radians(yaw0_)
     fwd = np.array([np.cos(yr), np.sin(yr)])         # 진행방향
     left = np.array([-np.sin(yr), np.cos(yr)])       # 좌측
-    base = np.array([x0_, y0_]) + fwd * 14           # 전방 14m 횡단지점
+    base = np.array([x0_, y0_]) + fwd * 9            # 전방 9m 횡단지점(ego 제동권)
     # (라벨, USD, 시작측면offset, 속도방향, 속력 m/s, 행동)
     plan = [
         ("pedestrian", PED_USDS[0],  10.0, -left, 1.4, "normal_cross"),
         ("pedestrian", PED_USDS[1], -8.0,  left, 1.8, "jaywalk"),
-        ("cyclist",    PED_USDS[0],  6.0, fwd * -1, 4.5, "cutin"),
+        # 이륜차: 차로 중앙 정면에서 ego 쪽으로 → ego가 제동
+        ("cyclist",    PED_USDS[2],  0.0, fwd * -1, 2.5, "cutin"),
     ]
     for i, (label, usd, off, vdir, spd, beh) in enumerate(plan):
         start = base + left * off
