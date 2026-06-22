@@ -219,22 +219,23 @@ def _make_actor(path, usd, x, y, z, yaw, label, vx=0.0, vy=0.0,
 
 
 # ── 차량/이륜차 ──────────────────────────────────────────────────────────────
-# 승용차·트럭: Kenney Car Kit(CC0) 실제 모델(GLB→USD 변환). Y-up·~2.55m라
-#   배치 시 Rx90(Y-up→Z-up)+Rz(yaw+90)+scale로 보정. _VEH_RX/_VEH_RZ는 이동 시 유지.
+# 실제 CC0 모델: 승용차·트럭=Kenney Car Kit(Y-up→Rx90 보정), 버스=Poly Pizza(Z-up).
+#   소스마다 축/스케일이 달라 종류별 cfg(files·scale·rx·rz). rx/rz는 이동 시 유지.
 _VEH_USD = "/home/karma/OSMtoUSD/assets/vehicles/usd/"
-_VEH_ASSETS = {
-    "car":   ["sedan", "suv", "hatchback-sports", "taxi", "police", "van",
-              "suv-luxury", "sedan-sports"],
-    "truck": ["truck", "delivery", "garbage-truck", "firetruck", "ambulance",
-              "truck-flat", "tractor"],
+_VEH_CFG = {
+    "car":   {"files": ["sedan", "suv", "hatchback-sports", "taxi", "police",
+                        "van", "suv-luxury", "sedan-sports"],
+              "scale": (1.2, 1.12, 1.73), "rx": 90.0, "rz": 90.0},
+    "truck": {"files": ["truck", "delivery", "garbage-truck", "firetruck",
+                        "ambulance", "truck-flat", "tractor"],
+              "scale": (1.2, 1.12, 1.73), "rx": 90.0, "rz": 90.0},
+    "bus":   {"files": ["bus"],          # Poly Pizza CC-BY, 이미 Z-up
+              "scale": (0.05, 0.066, 0.076), "rx": 0.0, "rz": 90.0},
 }
-# 로컬축(폭X, 높이Y, 길이Z)별 스케일 → 실차 비율(약 4.4×1.8×1.45m)
-_VEH_SCALE, _VEH_RX, _VEH_RZ = (1.2, 1.12, 1.73), 90.0, 90.0
-# 버스·이륜차: 아직 실모델 없음 → 박스 프록시(길이,폭,높이),(운전실 l,w,h,x),색
+# 오토바이·자전거: 쓸만한 CC0 실모델 부재 → 박스 프록시(2륜 실루엣). 라벨은 정확.
 _PROXY_TYPES = {
-    "bus":        ((11.0, 2.5, 2.7), None,                 (0.18, 0.55, 0.60)),
-    "motorcycle": ((2.1, 0.5, 0.95), None,                 (0.10, 0.10, 0.12)),
-    "bicycle":    ((1.7, 0.35, 1.05), None,                (0.75, 0.20, 0.20)),
+    "motorcycle": ((2.1, 0.5, 0.95), None, (0.10, 0.10, 0.12)),
+    "bicycle":    ((1.7, 0.35, 1.05), None, (0.75, 0.20, 0.20)),
 }
 import random as _rnd
 _rnd.seed(7)
@@ -255,14 +256,16 @@ def _make_vehicle(path, kind, x, y, z, yaw, vx=0.0, vy=0.0, behavior="static"):
     api = UsdGeom.XformCommonAPI(parent)
     api.SetTranslate(Gf.Vec3d(x, y, z))
     rx, rz_off = 0.0, 0.0
-    if kind in _VEH_ASSETS:                        # 실제 Kenney 모델
-        f = _rnd.choice(_VEH_ASSETS[kind])
+    if kind in _VEH_CFG:                            # 실제 CC0 모델
+        cfg = _VEH_CFG[kind]
+        f = _rnd.choice(cfg["files"])
         add_reference_to_stage(usd_path=_VEH_USD + f + ".usd",
                                prim_path=path + "/model")
-        rx, rz_off = _VEH_RX, _VEH_RZ
-        api.SetScale(Gf.Vec3f(*_VEH_SCALE))
-    else:                                          # 박스 프록시
-        (L, W, H), cabin, color = _PROXY_TYPES.get(kind, _PROXY_TYPES["bus"])
+        rx, rz_off = cfg["rx"], cfg["rz"]
+        api.SetScale(Gf.Vec3f(*cfg["scale"]))
+    else:                                          # 박스 프록시(오토바이/자전거)
+        (L, W, H), cabin, color = _PROXY_TYPES.get(kind,
+                                                   _PROXY_TYPES["motorcycle"])
         _box(path, "body", L, W, H, 0.0, 0.0, H / 2, color)
         if cabin:
             cl, cw, ch, cx = cabin
@@ -318,7 +321,7 @@ def _spawn_vru(wps):
         start = base + left * off
         vel = vdir / (np.linalg.norm(vdir) + 1e-9) * spd
         head = float(np.degrees(np.arctan2(vel[1], vel[0])))
-        if label in _VEH_ASSETS or label in _PROXY_TYPES:    # 차량/이륜차
+        if label in _VEH_CFG or label in _PROXY_TYPES:       # 차량/이륜차
             _make_vehicle(f"/World/Actors/{label}_{i}", label,
                           float(start[0]), float(start[1]), z0_ - 0.5,
                           head, float(vel[0]), float(vel[1]), beh)
