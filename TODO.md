@@ -11,11 +11,14 @@
 | 텍스처 생성 + 적용 | ✅ 완료 | `texture_gen.py`, `apply_textures.py` |
 | Polyscope 뷰어 | ✅ 완료 | `viewer.py` |
 | Isaac Sim Physics/Semantics/RoadGraph 후처리 | ✅ 완료 | `isaac_setup.py` |
-| Omniverse/Isaac Sim 실제 연동 | ❌ 미착수 | |
-| Replicator 합성 데이터 생성 | ❌ 미착수 | |
-| 5종 시나리오 구현 | ❌ 미착수 | |
-| 슈퍼컴 배치 렌더링 파이프라인 | ❌ 미착수 | |
-| 웹 플랫폼 (FastAPI + React) | ❌ 미착수 | |
+| Omniverse/Isaac Sim 실제 연동 | ✅ 완료 | `sensor_drive.py`, `sensor_debug.py` |
+| Replicator 합성 데이터 생성 | ✅ 완료 | 카메라4+LiDAR+근접+자동라벨 |
+| 5종 시나리오 구현 | ✅ 완료 | `scenarios/scenario_0[1-5]_*.py` |
+| 슈퍼컴 배치 렌더링 파이프라인 | ✅ 완료 | `pipeline/`, `supercomp/` (SLURM 템플릿) |
+| 웹 플랫폼 (FastAPI + 정적 포털) | ✅ 완료 | `web/` (React 대신 정적 SPA) |
+
+> 진행 메모: 기능 전반 구현·검증 완료. 미해결: Radar(빌드버그 스킵), 실모델 LiDAR(에셋서버 이름),
+> 시나리오 대량생성 1만 프레임(소량 검증만 — `NUM_FRAMES`로 확장), 슈퍼컴 실계정 연계.
 
 ---
 
