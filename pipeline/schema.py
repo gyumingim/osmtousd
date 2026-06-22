@@ -45,7 +45,7 @@ META_REQUIRED = ["scenario", "scenario_name", "variant", "frame_count",
 # 의미 클래스(라벨) 화이트리스트
 CLASSES = ["building", "road", "road_marking", "crosswalk", "sidewalk",
            "traffic_sign", "traffic_light", "car", "truck", "bus",
-           "motorcycle", "bicycle", "pedestrian"]
+           "motorcycle", "bicycle", "pedestrian", "forklift"]
 
 # 데이터셋 폴더명 규칙: scenario_NN/<variant>
 DATASET_DIR_RE = r"scenario_\d2/[A-Za-z0-9_]+"

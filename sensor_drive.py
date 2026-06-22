@@ -508,7 +508,7 @@ def _spawn_amr(wps):
     _make_actor("/World/Actors/forklift_amr", VEHICLE_USD,
                 float(fs[0]), float(fs[1]), z0_ - 0.5,
                 float(np.degrees(np.arctan2(fv[1], fv[0]))),
-                "vehicle", float(fv[0]), float(fv[1]), "forklift_moving")
+                "forklift", float(fv[0]), float(fv[1]), "forklift_moving")
 
 
 def _spawn_ambient(wps):
@@ -939,15 +939,17 @@ def parse_bboxes(bbox):
         return out
     id2label = bbox.get("info", {}).get("idToLabels", {})
     for bb in bbox["data"]:
+        x0, y0 = int(bb["x_min"]), int(bb["y_min"])
+        x1, y1 = int(bb["x_max"]), int(bb["y_max"])
+        if (x1 - x0) < 2 or (y1 - y0) < 2:        # 퇴화/1px 박스 제거
+            continue
         sid = int(bb["semanticId"])
         lab = id2label.get(sid, id2label.get(str(sid), ""))
         if isinstance(lab, dict):
             lab = lab.get("class") or next(iter(lab.values()), "")
-        out.append({
-            "label": str(lab),
-            "x_min": int(bb["x_min"]), "y_min": int(bb["y_min"]),
-            "x_max": int(bb["x_max"]), "y_max": int(bb["y_max"]),
-        })
+        lab = str(lab).split(",")[0]              # 다중 semantic 시 첫 클래스
+        out.append({"label": lab, "x_min": x0, "y_min": y0,
+                    "x_max": x1, "y_max": y1})
     return out
 
 
