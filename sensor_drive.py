@@ -128,20 +128,33 @@ def build_path():
                 best_len, best_curve, best_i = ln, a, 0
         print(f"  traffic 차로: 최장 커브 {best_len:.1f}m")
     else:
+        # 건물 밀집 시작점 — 단, 시작점 앞에 ego 주행거리(need)만큼 남아야 함
+        need = DIST_STEP * NUM_FRAMES            # ego가 가려는 총 거리
         best_curve, best_i, best_cnt = None, 0, -1
+        longest, long_len = None, -1.0           # fallback용 최장 커브
         for c in rg.GetChildren():
             pts = c.GetAttribute("points").Get()
             if pts is None or len(pts) < 2:
                 continue
             a = np.array(pts)
+            cum = np.concatenate([[0], np.cumsum(
+                np.linalg.norm(np.diff(a[:, :2], axis=0), axis=1))])
+            if cum[-1] > long_len:
+                longest, long_len = a, cum[-1]
             if len(bcent) == 0:
                 best_curve, best_i = a, 0
                 break
             for i in range(0, len(a), 2):
+                if cum[-1] - cum[i] < need * 0.9:    # 앞에 충분히 남아야
+                    continue
                 cnt = int((np.linalg.norm(bcent - a[i, :2], axis=1) < 40).sum())
                 if cnt > best_cnt:
                     best_cnt, best_curve, best_i = cnt, a, i
-        print(f"  밀집 시작: 40m내 건물 {best_cnt}개")
+        if best_curve is None:                   # 충분히 긴 커브 없음 → 최장
+            best_curve, best_i = longest, 0
+            print(f"  밀집 시작 없음 → 최장 커브 {long_len:.1f}m")
+        else:
+            print(f"  밀집 시작: 40m내 건물 {best_cnt}개 (앞 {need:.0f}m 확보)")
     if best_curve is None:
         return None
 
