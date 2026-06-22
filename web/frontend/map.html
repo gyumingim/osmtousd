@@ -27,8 +27,10 @@
     <button id="btn-node" onclick="setMode('node')"
       style="background:#334155;color:#e2e8f0;border:none;border-radius:4px;padding:4px 8px;cursor:pointer">노드유형</button>
     <button id="btn-heat" onclick="setMode('heat')"
-      style="background:#334155;color:#e2e8f0;border:none;border-radius:4px;padding:4px 8px;cursor:pointer">혼잡도</button>
-    <select id="hour" onchange="if(MODE=='heat')setMode('heat')"
+      style="background:#334155;color:#e2e8f0;border:none;border-radius:4px;padding:4px 8px;cursor:pointer">노드혼잡</button>
+    <button id="btn-road" onclick="setMode('road')"
+      style="background:#334155;color:#e2e8f0;border:none;border-radius:4px;padding:4px 8px;cursor:pointer">도로혼잡</button>
+    <select id="hour" onchange="if(MODE!='node')setMode(MODE)"
       style="background:#0f172a;color:#e2e8f0;border:1px solid #475569;border-radius:4px;padding:3px">
     </select>
   </div>
@@ -56,6 +58,25 @@ async function setMode(m){
   MODE = m; LAYER.clearLayers();
   document.getElementById("btn-node").style.outline = m=="node"?"2px solid #34d399":"none";
   document.getElementById("btn-heat").style.outline = m=="heat"?"2px solid #34d399":"none";
+  document.getElementById("btn-road").style.outline = m=="road"?"2px solid #34d399":"none";
+  if (m=="road") {
+    const hour = document.getElementById("hour").value;
+    const d = await fetch(`/api/links/congestion?hour=${hour}`).then(r=>r.json());
+    d.links.forEach(lk=>{
+      const col = lk.outlier ? "#ffffff" : congColor(lk.congestion);
+      lk.parts.forEach(pts=>L.polyline(pts,{
+        color: col, weight: lk.outlier?5:2+lk.congestion*4, opacity:0.85
+      }).bindPopup(`<b>${lk.name||"도로"}</b><br>교통량 ${lk.volume_15min}/15분<br>혼잡 ${(lk.congestion*100).toFixed(0)}% · Z=${lk.zscore} ${lk.outlier?"⚠️이상치":""}`).addTo(LAYER));
+    });
+    const out = d.links.filter(l=>l.outlier).length;
+    document.getElementById("stats").innerHTML=`${hour}시 도로혼잡 · 링크 <b>${d.count}</b>개 · <b style="color:#fca5a5">이상치 ${out}개</b>`;
+    document.getElementById("legend").innerHTML=
+      `<div><span style="background:rgb(80,255,80);border-radius:0;width:16px;height:4px"></span> 원활</div>
+       <div><span style="background:rgb(255,200,80);border-radius:0;width:16px;height:4px"></span> 보통</div>
+       <div><span style="background:rgb(255,40,80);border-radius:0;width:16px;height:4px"></span> 혼잡(굵게)</div>
+       <div><span style="background:#fff;border-radius:0;width:16px;height:4px"></span> Z-score 이상치</div>`;
+    return;
+  }
   if (m=="node") {
     const [ix, sg] = await Promise.all([
       fetch("/api/intersections").then(r=>r.json()),

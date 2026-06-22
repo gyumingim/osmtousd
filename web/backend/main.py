@@ -151,6 +151,13 @@ def heatmap(hour: int = None):
     return traffic.simulate_volume(hour)
 
 
+@app.get("/api/links/congestion")
+def links_congestion(hour: int = None):
+    """도로링크별 혼잡도 (도로선 그라데이션용) — 차로수·시간대 + Z-score."""
+    from . import traffic
+    return traffic.simulate_link_volume(hour)
+
+
 @app.get("/api/vds/live")
 def vds_live(hour: int = None):
     """VDS 검지기 15분 단위 실시간(시뮬) — 이상상황 알림 포함."""
