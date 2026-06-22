@@ -102,6 +102,10 @@ def package_combo(combo_dir):
         calib = os.path.join(combo_dir, "calibration.json")
         if os.path.exists(calib):
             z.write(calib, "meta/calibration.json")
+        # 궤적 라벨 포함
+        traj = os.path.join(combo_dir, "trajectories.json")
+        if os.path.exists(traj):
+            z.write(traj, "labels/trajectories.json")
         # meta/
         z.writestr("meta/metadata.json",
                    json.dumps(meta, indent=2, ensure_ascii=False))
