@@ -775,7 +775,9 @@ def get_lidar_pts(ex, ey, ez, yaw_deg):
 
 
 # 악천후 센서 성능 저하 (비/안개 → LiDAR 노이즈 + 포인트 드롭)
-_WEATHER_NOISE = {"rain": (0.10, 0.25), "fog": (0.05, 0.50)}
+# (거리노이즈 sigma, 포인트 드롭률) — 눈/야간호우는 강한 산란·드롭
+_WEATHER_NOISE = {"rain": (0.10, 0.25), "fog": (0.05, 0.50),
+                  "snow": (0.12, 0.45), "night_storm": (0.14, 0.55)}
 
 
 def degrade_lidar(pts):

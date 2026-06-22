@@ -22,6 +22,8 @@ COMBOS = [
     ("day",   "rain"),
     ("dusk",  "fog"),
     ("night", "rain"),
+    ("day",   "snow"),
+    ("night", "night_storm"),
 ]
 NUM_FRAMES = os.environ.get("NUM_FRAMES", "10")
 

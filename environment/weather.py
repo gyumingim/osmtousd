@@ -27,7 +27,19 @@ WEATHER_PRESETS = {
         "dome_mult": 0.4, "fog": True,
         "fog_color": (0.55, 0.6, 0.68), "fog_start": 5, "fog_end": 120,
     },
+    "snow": {  # 눈 — 밝은 흰 산란, 가시거리 중간 (지면 반사로 밝음)
+        "dome_mult": 0.9, "fog": True,
+        "fog_color": (0.92, 0.93, 0.95), "fog_start": 3, "fog_end": 45,
+    },
+    "night_storm": {  # 야간 호우 — 매우 어둡고 가시거리 급감
+        "dome_mult": 0.18, "fog": True,
+        "fog_color": (0.32, 0.36, 0.45), "fog_start": 3, "fog_end": 55,
+    },
 }
+
+# LiDAR 강수 감쇠율(포인트 드롭 확률) — sensor_drive.degrade_lidar에서 참조
+LIDAR_DROP = {"clear": 0.0, "cloudy": 0.0, "fog": 0.5, "rain": 0.25,
+              "snow": 0.45, "night_storm": 0.55}
 
 
 def apply_weather(stage, preset, dome_path="/World/DomeLight"):
