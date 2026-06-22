@@ -346,31 +346,53 @@ def update_traffic(t):
 
 
 _V2X = []
+COMM_RANGE = 300.0      # C-V2X/DSRC 통신 반경(m)
+COMM_LATENCY_MS = 100   # 전송 지연
+_v2x_rng = np.random.RandomState(7)
+
+
+def _rssi(d):
+    """자유공간 경로손실 근사 수신세기(dBm)."""
+    return round(-40.0 - 20.0 * np.log10(max(1.0, d)), 1)
+
+
+def _delivery_prob(d):
+    """거리에 따른 패킷 전달 확률 (멀수록 손실↑)."""
+    return float(max(0.0, 1.0 - (d / COMM_RANGE) ** 2))
 
 
 def accumulate_v2x(fi, ex, ey, eyaw, sig):
-    """폐루프 V2X 메시지 누적: SPaT(실제 신호)·BSM·V2V."""
+    """실제 통신 모델: 노드별 송신 → 링크별(거리·RSSI·손실·지연) 수신 로그.
+    위치 덤프가 아니라 송수신 이벤트(tx→rx, 전달여부 포함)를 기록."""
     ts = round(fi * TDT, 2)
-    _V2X.append({"type": "SPaT", "sender": "RSU_signal_01", "frame": fi,
-                 "timestamp": ts, "phase": sig["phase"],
-                 "time_to_change_s": sig["time_to_change"]})
-    agents = [("ego", ex, ey, eyaw)]
+    sx, sy, _, _ = lane_at(SIG_S)
+    # 노드: ego + 차량 + 신호 RSU. 각자 메시지 송신.
+    nodes = [("ego", ex, ey,
+              {"type": "BSM", "x": round(ex, 2), "y": round(ey, 2),
+               "heading": round(eyaw, 1)}),
+             ("RSU_signal_01", sx, sy,
+              {"type": "SPaT", "phase": sig["phase"],
+               "time_to_change_s": sig["time_to_change"]})]
     for i, c in enumerate(_TRAFFIC):
-        agents.append((f"veh_{i}", c["a"]["x"], c["a"]["y"], c["a"]["yaw"]))
-    for vid, ax, ay, ah in agents:
-        _V2X.append({"type": "BSM", "sender": vid, "frame": fi,
-                     "timestamp": ts, "x": round(ax, 2), "y": round(ay, 2),
-                     "heading": round(ah, 1)})
-    for i in range(len(agents)):
-        for j in range(i + 1, len(agents)):
-            rng = float(np.hypot(agents[i][1] - agents[j][1],
-                                 agents[i][2] - agents[j][2]))
-            if rng <= 30.0:
-                _V2X.append({"type": "V2V", "from": agents[i][0],
-                             "to": agents[j][0], "frame": fi, "timestamp": ts,
-                             "range_m": round(rng, 2),
-                             "alert": "proximity" if rng > 8
-                             else "forward_collision_warning"})
+        a = c["a"]
+        nodes.append((f"veh_{i}", a["x"], a["y"],
+                      {"type": "BSM", "x": round(a["x"], 2),
+                       "y": round(a["y"], 2), "heading": round(a["yaw"], 1)}))
+    # 링크별 전달 (PHY 근사: 범위·RSSI·확률손실·지연)
+    for sid, sxx, syy, payload in nodes:
+        for rid, rxx, ryy, _p in nodes:
+            if rid == sid:
+                continue
+            d = float(np.hypot(sxx - rxx, syy - ryy))
+            if d > COMM_RANGE:
+                continue            # 통신 범위 밖 → 미수신
+            delivered = bool(_v2x_rng.random() < _delivery_prob(d))
+            rec = {"frame": fi, "timestamp": ts, "tx": sid, "rx": rid,
+                   "msg": payload["type"], "range_m": round(d, 1),
+                   "rssi_dbm": _rssi(d), "latency_ms": COMM_LATENCY_MS,
+                   "delivered": delivered}
+            rec.update({k: v for k, v in payload.items() if k != "type"})
+            _V2X.append(rec)
 
 
 def spawn_actors(wps):

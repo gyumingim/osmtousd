@@ -33,12 +33,15 @@ def main():
     log = os.path.join("/home/karma/OSMtoUSD/output", SUBDIR, "v2x_log.json")
     if os.path.exists(log):
         d = json.load(open(log))
+        msgs = d["messages"]
         cnt = {}
-        for m in d["messages"]:
-            cnt[m["type"]] = cnt.get(m["type"], 0) + 1
-        phases = sorted({m["phase"] for m in d["messages"]
-                         if m["type"] == "SPaT"})
-        print(f"=== 완료: V2X {len(d['messages'])}개 {cnt} · 신호위상 {phases} ===")
+        for m in msgs:
+            cnt[m["msg"]] = cnt.get(m["msg"], 0) + 1
+        delivered = sum(1 for m in msgs if m["delivered"])
+        lost = len(msgs) - delivered
+        phases = sorted({m["phase"] for m in msgs if m["msg"] == "SPaT"})
+        print(f"=== 완료: V2X 링크 {len(msgs)}개 {cnt} · "
+              f"전달 {delivered}/손실 {lost} · 신호위상 {phases} ===")
     else:
         print(f"[경고] v2x_log.json 없음 (rc={rc})")
         sys.exit(1)
