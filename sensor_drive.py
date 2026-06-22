@@ -4,6 +4,7 @@ app = SimulationApp({"headless": True, "enable_motion_bvh": True})
 
 import os
 import json
+import yaml
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
@@ -470,6 +471,90 @@ def raycast_us(ex, ey, ez, yaw_deg):
     return out
 
 
+def _cast(ox, oy, oz, dx, dy, dz, maxd):
+    """단일 raycast → (거리, 충돌체경로) 또는 (None, None)."""
+    d = np.array([dx, dy, dz], float)
+    d /= (np.linalg.norm(d) + 1e-9)
+    try:
+        h = physx_query.raycast_closest([ox, oy, oz], list(d), maxd)
+        if h and h.get("hit"):
+            return float(h["distance"]), str(h.get("collision", ""))
+    except Exception:
+        pass
+    return None, None
+
+
+def sense_radar(ex, ey, ez, yaw_deg, max_r=100.0):
+    """전방 섹터 레이더: 빔별 거리 + 라디얼 속도(접근+). actor 속도 활용."""
+    yr = np.radians(yaw_deg)
+    rows = []
+    for beam, ang in enumerate(np.linspace(-40, 40, 9)):
+        ar = yr + np.radians(ang)
+        dx, dy = np.cos(ar), np.sin(ar)
+        dist, coll = _cast(ex, ey, ez + 0.5, dx, dy, 0.0, max_r)
+        if dist is None:
+            continue
+        rv = 0.0  # 정지물=0, 이동 actor면 LOS 속도성분
+        for a in _ACTORS:
+            if a["path"] in coll:
+                rv = -(a["vx"] * dx + a["vy"] * dy)
+                break
+        rows.append({"beam": beam, "azimuth_deg": round(float(ang), 1),
+                     "range_m": round(dist, 2),
+                     "radial_velocity_mps": round(rv, 2)})
+    return rows
+
+
+def sense_ultrasonic(ex, ey, ez, yaw_deg, max_r=5.0):
+    """범퍼 8방향 단거리(≤5m) 초음파. (sensor, distance) — 미탐지는 max."""
+    yr = np.radians(yaw_deg)
+    cos, sin = np.cos(yr), np.sin(yr)
+    rows = []
+    for label, off, d in US_DEFS:
+        ox, oy, oz = off
+        wx = ex + ox * cos - oy * sin
+        wy = ey + ox * sin + oy * cos
+        dx = d[0] * cos - d[1] * sin
+        dy = d[0] * sin + d[1] * cos
+        dist, _ = _cast(wx, wy, ez + oz, dx, dy, d[2], max_r)
+        rows.append({"sensor": label,
+                     "distance_m": round(dist, 3) if dist else max_r,
+                     "detected": dist is not None})
+    return rows
+
+
+def write_pcd(path, pts):
+    """포인트클라우드 → ASCII PCD (제안서 .pcd 포맷)."""
+    n = 0 if pts is None else len(pts)
+    with open(path, "w") as f:
+        f.write("# .PCD v0.7 - Point Cloud Data\nVERSION 0.7\n"
+                "FIELDS x y z\nSIZE 4 4 4\nTYPE F F F\nCOUNT 1 1 1\n"
+                f"WIDTH {n}\nHEIGHT 1\nVIEWPOINT 0 0 0 1 0 0 0\n"
+                f"POINTS {n}\nDATA ascii\n")
+        if n:
+            for p in pts:
+                f.write(f"{p[0]:.3f} {p[1]:.3f} {p[2]:.3f}\n")
+
+
+def write_csv(path, rows, cols):
+    """딕트 리스트 → CSV (제안서 Radar/Ultrasonic .csv 포맷)."""
+    with open(path, "w") as f:
+        f.write(",".join(cols) + "\n")
+        for r in rows:
+            f.write(",".join(str(r[c]) for c in cols) + "\n")
+
+
+def clean(o):
+    """numpy 스칼라/배열 → native (json·yaml 직렬화 안전)."""
+    if isinstance(o, dict):
+        return {k: clean(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [clean(v) for v in o]
+    if isinstance(o, np.generic):
+        return o.item()
+    return o
+
+
 # ── bbox 파싱 (numpy structured array → dict 리스트) ─────────────────────────
 def parse_bboxes(bbox):
     out = []
@@ -656,9 +741,18 @@ for fi in range(NUM_FRAMES):
     n_bb = sum(len(v) for v in bbox_json.values())
     log(f"  frame {fi}: 카메라 {len(cam_imgs)}장 bbox={n_bb}")
 
-    # LiDAR / 근접 raycast
+    # LiDAR / 근접 raycast / Radar / Ultrasonic
     pts = degrade_lidar(get_lidar_pts(fi))
     us_vals = raycast_us(x, y, z, yaw)
+    radar_rows = sense_radar(x, y, z, yaw)
+    us_rows = sense_ultrasonic(x, y, z, yaw)
+    # 제안서 포맷 저장: LiDAR .pcd, Radar/Ultrasonic .csv
+    write_pcd(os.path.join(LABELS_DIR, f"frame_{fi:04d}_lidar.pcd"), pts)
+    write_csv(os.path.join(LABELS_DIR, f"frame_{fi:04d}_radar.csv"),
+              radar_rows, ["beam", "azimuth_deg", "range_m",
+                           "radial_velocity_mps"])
+    write_csv(os.path.join(LABELS_DIR, f"frame_{fi:04d}_ultrasonic.csv"),
+              us_rows, ["sensor", "distance_m", "detected"])
 
     # 자동 라벨 (front): 세그/인스턴스/깊이/3D박스
     seg_img = seg_to_rgb(seg_an.get_data())
@@ -691,20 +785,30 @@ for fi in range(NUM_FRAMES):
         "bbox2d": bbox_json,
         "bbox3d": boxes3d,
         "actors": [{"label": a["label"], "behavior": a["behavior"],
-                    "x": round(a["x"], 2), "y": round(a["y"], 2),
-                    "yaw": round(a["yaw"], 1)} for a in _ACTORS],
+                    "x": round(float(a["x"]), 2), "y": round(float(a["y"]), 2),
+                    "yaw": round(float(a["yaw"]), 1)} for a in _ACTORS],
         "ttc": {"ttc_s": ttc, "min_range_m": ttc_rng, "phase": ttc_phase},
         "lidar_pts": int(len(pts)) if pts is not None else 0,
         "proximity_m": {lbl: float(v) for lbl, v in us_vals},
+        "radar_detections": len(radar_rows),
+        "ultrasonic_detections": sum(1 for r in us_rows if r["detected"]),
         "labels": {
             "semantic_seg": f"labels/frame_{fi:04d}_seg.png",
             "instance_seg": f"labels/frame_{fi:04d}_inst.png",
             "depth": f"labels/frame_{fi:04d}_depth.png",
+            "lidar_pcd": f"labels/frame_{fi:04d}_lidar.pcd",
+            "radar_csv": f"labels/frame_{fi:04d}_radar.csv",
+            "ultrasonic_csv": f"labels/frame_{fi:04d}_ultrasonic.csv",
         },
     }
+    meta = clean(meta)
     with open(os.path.join(OUTPUT_DIR, f"frame_{fi:04d}.json"), "w",
               encoding="utf-8") as f:
         json.dump(meta, f, indent=2, ensure_ascii=False)
+    # 메타 .yaml 도 저장 (제안서 .yaml 포맷)
+    with open(os.path.join(OUTPUT_DIR, f"frame_{fi:04d}.yaml"), "w",
+              encoding="utf-8") as f:
+        yaml.safe_dump(meta, f, allow_unicode=True, sort_keys=False)
 
     Image.fromarray(
         make_composite(cam_imgs, lidar_topdown(pts), us_viz(us_vals),

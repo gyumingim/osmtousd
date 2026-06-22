@@ -86,9 +86,11 @@ def package_combo(combo_dir):
         # data/ ← 합성 프레임 PNG
         for png in sorted(glob.glob(os.path.join(combo_dir, "frame_*.png"))):
             z.write(png, f"data/{os.path.basename(png)}")
-        # labels/ ← 프레임 JSON + 세그/깊이/인스턴스
+        # labels/ ← 프레임 JSON/YAML + 세그/깊이/인스턴스/pcd/csv
         for jp in sorted(glob.glob(os.path.join(combo_dir, "frame_*.json"))):
             z.write(jp, f"labels/{os.path.basename(jp)}")
+        for yp in sorted(glob.glob(os.path.join(combo_dir, "frame_*.yaml"))):
+            z.write(yp, f"labels/{os.path.basename(yp)}")
         for lp in sorted(glob.glob(os.path.join(combo_dir, "labels", "*"))):
             z.write(lp, f"labels/{os.path.basename(lp)}")
         # V2X 로그가 있으면 포함
