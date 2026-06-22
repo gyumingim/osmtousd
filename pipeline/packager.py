@@ -98,6 +98,10 @@ def package_combo(combo_dir):
         v2x = os.path.join(combo_dir, "v2x_log.json")
         if os.path.exists(v2x):
             z.write(v2x, "labels/v2x_log.json")
+        # 센서 캘리브레이션 포함
+        calib = os.path.join(combo_dir, "calibration.json")
+        if os.path.exists(calib):
+            z.write(calib, "meta/calibration.json")
         # meta/
         z.writestr("meta/metadata.json",
                    json.dumps(meta, indent=2, ensure_ascii=False))
