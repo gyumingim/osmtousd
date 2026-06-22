@@ -34,6 +34,9 @@ DIST_STEP  = SPEED_MPS * DT
 NUM_FRAMES = int(os.environ.get("NUM_FRAMES", "10"))
 ACTOR_MODE = os.environ.get("ACTOR_MODE", "static")  # static/vru/collision/traffic/amr
 EGO_REACT = os.environ.get("EGO_REACT", "1") == "1"  # 0=전방장애물 무반응(사고)
+# 배경 밀도(씬을 붐비게): 주변 차량·보행자 수 (시나리오 액터에 추가)
+AMBIENT_VEH = int(os.environ.get("AMBIENT_VEH", "10"))
+AMBIENT_PED = int(os.environ.get("AMBIENT_PED", "10"))
 CAM_W, CAM_H = 640, 360
 
 LABELS_DIR = os.path.join(OUTPUT_DIR, "labels")
@@ -215,22 +218,86 @@ def _make_actor(path, usd, x, y, z, yaw, label, vx=0.0, vy=0.0,
                     "behavior": behavior})
 
 
+# ── 차량/이륜차 ──────────────────────────────────────────────────────────────
+# 승용차·트럭: Kenney Car Kit(CC0) 실제 모델(GLB→USD 변환). Y-up·~2.55m라
+#   배치 시 Rx90(Y-up→Z-up)+Rz(yaw+90)+scale로 보정. _VEH_RX/_VEH_RZ는 이동 시 유지.
+_VEH_USD = "/home/karma/OSMtoUSD/assets/vehicles/usd/"
+_VEH_ASSETS = {
+    "car":   ["sedan", "suv", "hatchback-sports", "taxi", "police", "van",
+              "suv-luxury", "sedan-sports"],
+    "truck": ["truck", "delivery", "garbage-truck", "firetruck", "ambulance",
+              "truck-flat", "tractor"],
+}
+# 로컬축(폭X, 높이Y, 길이Z)별 스케일 → 실차 비율(약 4.4×1.8×1.45m)
+_VEH_SCALE, _VEH_RX, _VEH_RZ = (1.2, 1.12, 1.73), 90.0, 90.0
+# 버스·이륜차: 아직 실모델 없음 → 박스 프록시(길이,폭,높이),(운전실 l,w,h,x),색
+_PROXY_TYPES = {
+    "bus":        ((11.0, 2.5, 2.7), None,                 (0.18, 0.55, 0.60)),
+    "motorcycle": ((2.1, 0.5, 0.95), None,                 (0.10, 0.10, 0.12)),
+    "bicycle":    ((1.7, 0.35, 1.05), None,                (0.75, 0.20, 0.20)),
+}
+import random as _rnd
+_rnd.seed(7)
+
+
+def _box(parent_path, name, L, W, H, cx, cy, cz, color):
+    c = UsdGeom.Cube.Define(stage, parent_path + "/" + name)
+    c.CreateSizeAttr(1.0)                          # 단위큐브 → scale로 박스
+    a = UsdGeom.XformCommonAPI(c)
+    a.SetTranslate(Gf.Vec3d(cx, cy, cz))
+    a.SetScale(Gf.Vec3f(L, W, H))
+    c.CreateDisplayColorAttr([Gf.Vec3f(*color)])
+
+
+def _make_vehicle(path, kind, x, y, z, yaw, vx=0.0, vy=0.0, behavior="static"):
+    """차량/이륜차 배치 + 클래스 라벨. car/truck=실모델, bus/이륜차=프록시."""
+    parent = UsdGeom.Xform.Define(stage, path)
+    api = UsdGeom.XformCommonAPI(parent)
+    api.SetTranslate(Gf.Vec3d(x, y, z))
+    rx, rz_off = 0.0, 0.0
+    if kind in _VEH_ASSETS:                        # 실제 Kenney 모델
+        f = _rnd.choice(_VEH_ASSETS[kind])
+        add_reference_to_stage(usd_path=_VEH_USD + f + ".usd",
+                               prim_path=path + "/model")
+        rx, rz_off = _VEH_RX, _VEH_RZ
+        api.SetScale(Gf.Vec3f(*_VEH_SCALE))
+    else:                                          # 박스 프록시
+        (L, W, H), cabin, color = _PROXY_TYPES.get(kind, _PROXY_TYPES["bus"])
+        _box(path, "body", L, W, H, 0.0, 0.0, H / 2, color)
+        if cabin:
+            cl, cw, ch, cx = cabin
+            _box(path, "cabin", cl, cw, ch, cx, 0.0, H + ch / 2, color)
+        else:                                      # 이륜차: 바퀴 2개
+            for wi, wx in enumerate((L / 2 - 0.3, -L / 2 + 0.3)):
+                _box(path, f"wheel{wi}", 0.5, W + 0.1, 0.5, wx, 0.0, 0.25,
+                     (0.05, 0.05, 0.05))
+    api.SetRotate(Gf.Vec3f(rx, 0.0, yaw + rz_off),
+                  UsdGeom.XformCommonAPI.RotationOrderXYZ)
+    add_update_semantics(parent.GetPrim(), kind)
+    _ACTORS.append({"path": path, "prim": parent, "x": x, "y": y, "z": z,
+                    "yaw": yaw, "vx": vx, "vy": vy, "label": kind,
+                    "behavior": behavior, "rx": rx, "rz_off": rz_off})
+
+
 def _spawn_static(wps):
-    plan = [
-        (2,  4.0, "vehicle", VEHICLE_USD, 0),
-        (4, -4.0, "vehicle", VEHICLE_USD, 180),
-        (6,  4.0, "vehicle", VEHICLE_USD, 0),
-        (3,  3.0, "pedestrian", PED_USDS[0], 0),
-        (5, -3.0, "pedestrian", PED_USDS[1], 0),
-    ]
-    for idx, lat, label, usd, dyaw in plan:
+    veh = [(2, 4.0, "car", 0), (4, -4.0, "truck", 180), (6, 4.0, "car", 0)]
+    ped = [(3, 3.0, PED_USDS[0]), (5, -3.0, PED_USDS[1])]
+    for idx, lat, kind, dyaw in veh:
         if idx >= len(wps):
             continue
         x, y, z, yaw = wps[idx]
         yr = np.radians(yaw)
-        _make_actor(f"/World/Actors/{label}_{idx}", usd,
+        _make_vehicle(f"/World/Actors/{kind}_{idx}", kind,
+                      x + np.sin(yr) * lat, y - np.cos(yr) * lat, z - 0.5,
+                      yaw + dyaw)
+    for idx, lat, usd in ped:
+        if idx >= len(wps):
+            continue
+        x, y, z, yaw = wps[idx]
+        yr = np.radians(yaw)
+        _make_actor(f"/World/Actors/ped_{idx}", usd,
                     x + np.sin(yr) * lat, y - np.cos(yr) * lat, z - 0.5,
-                    yaw + dyaw, label)
+                    yaw, "pedestrian")
 
 
 def _spawn_vru(wps):
@@ -245,15 +312,20 @@ def _spawn_vru(wps):
         ("pedestrian", PED_USDS[0],  10.0, -left, 1.4, "normal_cross"),
         ("pedestrian", PED_USDS[1], -8.0,  left, 1.8, "jaywalk"),
         # 이륜차: 차로 중앙 정면에서 ego 쪽으로 → ego가 제동
-        ("cyclist",    PED_USDS[2],  0.0, fwd * -1, 2.5, "cutin"),
+        ("motorcycle", None,         0.0, fwd * -1, 2.5, "cutin"),
     ]
     for i, (label, usd, off, vdir, spd, beh) in enumerate(plan):
         start = base + left * off
         vel = vdir / (np.linalg.norm(vdir) + 1e-9) * spd
         head = float(np.degrees(np.arctan2(vel[1], vel[0])))
-        _make_actor(f"/World/Actors/{label}_{i}", usd,
-                    float(start[0]), float(start[1]), z0_ - 0.5,
-                    head, label, float(vel[0]), float(vel[1]), beh)
+        if label in _VEH_ASSETS or label in _PROXY_TYPES:    # 차량/이륜차
+            _make_vehicle(f"/World/Actors/{label}_{i}", label,
+                          float(start[0]), float(start[1]), z0_ - 0.5,
+                          head, float(vel[0]), float(vel[1]), beh)
+        else:
+            _make_actor(f"/World/Actors/{label}_{i}", usd,
+                        float(start[0]), float(start[1]), z0_ - 0.5,
+                        head, label, float(vel[0]), float(vel[1]), beh)
 
 
 def _spawn_collision(wps):
@@ -263,17 +335,17 @@ def _spawn_collision(wps):
     yr = np.radians(syaw)
     left = np.array([-np.sin(yr), np.cos(yr)])
     sp = np.array([sx, sy]) + left * 0.6    # 차로 점유(0.6m 치우침)
-    _make_actor("/World/Actors/stalled_veh", VEHICLE_USD,
-                float(sp[0]), float(sp[1]), sz - 0.5, syaw,
-                "vehicle", 0.0, 0.0, "stalled")
+    _make_vehicle("/World/Actors/stalled_veh", "car",
+                  float(sp[0]), float(sp[1]), sz - 0.5, syaw,
+                  0.0, 0.0, "stalled")
     # 측면 교차 진입차량: 전방 7m 옆에서 차로로 합류
     mx, my, mz, _ = lane_at(7.0)
     s = np.array([mx, my]) + left * 9
     vel = -left / (np.linalg.norm(left) + 1e-9) * 5.0
     head = float(np.degrees(np.arctan2(vel[1], vel[0])))
-    _make_actor("/World/Actors/crossing_veh", VEHICLE_USD,
-                float(s[0]), float(s[1]), mz - 0.5, head,
-                "vehicle", float(vel[0]), float(vel[1]), "crossing")
+    _make_vehicle("/World/Actors/crossing_veh", "truck",
+                  float(s[0]), float(s[1]), mz - 0.5, head,
+                  float(vel[0]), float(vel[1]), "crossing")
 
 
 # ── 신호등 + 주행차량 + 폐루프 V2X (ACTOR_MODE=traffic) ──────────────────────
@@ -316,8 +388,8 @@ def _spawn_traffic(wps):
     print(f"  신호 s={SIG_S:.1f}, ego 시작 s={_ego['s']:.1f} (차로 {lane_len:.1f}m)")
     for i, s0 in enumerate(car_s):
         x, y, z, yaw = lane_at(s0)
-        _make_actor(f"/World/Actors/car_{i}", VEHICLE_USD,
-                    x, y, z, yaw, "vehicle", 0.0, 0.0, "driving")
+        _make_vehicle(f"/World/Actors/car_{i}", "car",
+                      x, y, z, yaw, 0.0, 0.0, "driving")
         _TRAFFIC.append({"a": _ACTORS[-1], "s": s0, "v": 6.0})
 
 
@@ -345,7 +417,7 @@ def update_traffic(t):
         a["x"], a["y"], a["yaw"] = x, y, yaw
         api = UsdGeom.XformCommonAPI(a["prim"])
         api.SetTranslate(Gf.Vec3d(x, y, z))
-        api.SetRotate(Gf.Vec3f(0, 0, yaw),
+        api.SetRotate(Gf.Vec3f(a.get("rx", 0.0), 0.0, yaw + a.get("rz_off", 0.0)),
                       UsdGeom.XformCommonAPI.RotationOrderXYZ)
     return {"phase": phase, "time_to_change": ttc, "signal_s": SIG_S}
 
@@ -422,10 +494,40 @@ def _spawn_amr(wps):
                 "vehicle", float(fv[0]), float(fv[1]), "forklift_moving")
 
 
+def _spawn_ambient(wps):
+    """배경 밀도: 차로 옆 주차차량 + 인도 보행자 (씬을 붐비게). 차로 4.5m+ 밖."""
+    if _LANE_CUM is None:
+        return
+    UsdGeom.Xform.Define(stage, "/World/Ambient")
+    span = min(float(_LANE_CUM[-1]) - 1.0, 70.0)
+    mix = ["car", "car", "car", "truck", "bus", "motorcycle", "bicycle"]
+    for i in range(AMBIENT_VEH):
+        x, y, z, yaw = lane_at(2.0 + span * (i + 0.5) / AMBIENT_VEH)
+        yr = np.radians(yaw)
+        left = np.array([-np.sin(yr), np.cos(yr)])
+        side = 1.0 if i % 2 else -1.0
+        off = side * (4.5 + (i % 3) * 3.0)         # 차로 옆/갓길
+        _make_vehicle(f"/World/Ambient/veh_{i}", mix[i % len(mix)],
+                      float(x + left[0] * off), float(y + left[1] * off),
+                      z - 0.5, yaw + (180.0 if side > 0 else 0.0),
+                      0.0, 0.0, "parked")
+    for j in range(AMBIENT_PED):
+        x, y, z, yaw = lane_at(2.0 + span * (j + 0.5) / AMBIENT_PED)
+        yr = np.radians(yaw)
+        left = np.array([-np.sin(yr), np.cos(yr)])
+        side = 1.0 if j % 2 else -1.0
+        off = side * (7.0 + (j % 4) * 1.2)         # 인도
+        _make_actor(f"/World/Ambient/ped_{j}", PED_USDS[j % len(PED_USDS)],
+                    float(x + left[0] * off), float(y + left[1] * off),
+                    z - 0.5, yaw + 90.0 * side, "pedestrian",
+                    0.0, 0.0, "ambient")
+
+
 def spawn_actors(wps):
     UsdGeom.Xform.Define(stage, "/World/Actors")
     {"vru": _spawn_vru, "collision": _spawn_collision, "amr": _spawn_amr,
      "traffic": _spawn_traffic}.get(ACTOR_MODE, _spawn_static)(wps)
+    _spawn_ambient(wps)                            # 모든 시나리오에 배경 밀도
     return len(_ACTORS)
 
 
