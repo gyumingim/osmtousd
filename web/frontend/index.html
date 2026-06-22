@@ -46,8 +46,17 @@
       <h2 id="m-title" class="text-xl font-bold"></h2>
       <button onclick="closeModal()" class="text-slate-400 hover:text-white text-2xl leading-none">&times;</button>
     </div>
-    <img id="m-img" class="w-full rounded mb-3 bg-slate-900" />
-    <pre id="m-meta" class="text-xs bg-slate-900 rounded p-3 overflow-auto"></pre>
+    <img id="m-img" class="w-full rounded mb-2 bg-slate-900" />
+    <!-- 프레임 재생 플레이어 -->
+    <div class="flex items-center gap-3 mb-3 bg-slate-900 rounded px-3 py-2">
+      <button id="m-play" onclick="togglePlay()" class="bg-emerald-600 hover:bg-emerald-500 px-3 py-1 rounded text-sm font-semibold">▶ 재생</button>
+      <input id="m-slider" type="range" min="0" max="0" value="0" class="flex-1" oninput="seekFrame(this.value)" />
+      <span id="m-frame" class="text-xs text-slate-400 w-20 text-right">0 / 0</span>
+      <select id="m-fps" class="bg-slate-800 border border-slate-600 rounded text-xs px-1 py-0.5">
+        <option value="200">5fps</option><option value="100" selected>10fps</option><option value="66">15fps</option>
+      </select>
+    </div>
+    <pre id="m-meta" class="text-xs bg-slate-900 rounded p-3 overflow-auto max-h-48"></pre>
     <a id="m-dl" class="inline-block mt-3 bg-emerald-600 hover:bg-emerald-500 px-4 py-2 rounded text-sm font-semibold">ZIP 다운로드</a>
   </div>
 </div>
@@ -89,16 +98,41 @@ async function loadDatasets() {
   `).join("");
 }
 
+let PLAY = { id: null, n: 0, cur: 0, timer: null };
+
 async function openModal(id) {
   const r = await fetch(`${API}/api/datasets/${id}`);
   const m = await r.json();
   document.getElementById("m-title").textContent = `${m.scenario_name} — ${m.variant}`;
-  document.getElementById("m-img").src = `${API}/api/datasets/${id}/preview`;
   document.getElementById("m-meta").textContent = JSON.stringify(m, null, 2);
   document.getElementById("m-dl").href = `${API}/api/datasets/${id}/download`;
+  // 플레이어 초기화
+  stopPlay();
+  PLAY = { id, n: m.frame_count || 1, cur: 0, timer: null };
+  const sl = document.getElementById("m-slider");
+  sl.max = PLAY.n - 1; sl.value = 0;
+  showFrame(0);
   document.getElementById("modal").classList.remove("hidden");
 }
-function closeModal(){ document.getElementById("modal").classList.add("hidden"); }
+function showFrame(i) {
+  PLAY.cur = i;
+  document.getElementById("m-img").src = `${API}/api/datasets/${PLAY.id}/preview?frame=${i}`;
+  document.getElementById("m-slider").value = i;
+  document.getElementById("m-frame").textContent = `${i} / ${PLAY.n - 1}`;
+}
+function seekFrame(i){ stopPlay(); showFrame(parseInt(i)); }
+function togglePlay(){ PLAY.timer ? stopPlay() : startPlay(); }
+function startPlay(){
+  const fps = parseInt(document.getElementById("m-fps").value);
+  document.getElementById("m-play").textContent = "⏸ 정지";
+  PLAY.timer = setInterval(() => showFrame((PLAY.cur + 1) % PLAY.n), fps);
+}
+function stopPlay(){
+  if (PLAY.timer) clearInterval(PLAY.timer);
+  PLAY.timer = null;
+  document.getElementById("m-play").textContent = "▶ 재생";
+}
+function closeModal(){ stopPlay(); document.getElementById("modal").classList.add("hidden"); }
 
 document.getElementById("filter").addEventListener("change", loadDatasets);
 loadStats(); loadDatasets();
