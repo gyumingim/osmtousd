@@ -305,8 +305,10 @@ def _spawn_traffic(wps):
     add_update_semantics(stage.GetPrimAtPath("/World/TrafficSignal"),
                          "traffic_light")
     _SIGNAL = sig
-    print(f"  신호 정지선 s={SIG_S:.1f} (차로 {lane_len:.1f}m)")
-    car_s = [s for s in (SIG_S - 28, SIG_S - 18, SIG_S - 8) if s > 1.0]
+    # ego 바로 앞 선행차(신호 정지) + 신호 통과한 앞쪽차 → ego가 따라 정지
+    _ego["s"] = max(1.0, SIG_S - 18.0)        # ego는 선행차 뒤
+    car_s = [s for s in (SIG_S - 6.0, SIG_S + 8.0, SIG_S + 16.0) if s > 1.0]
+    print(f"  신호 s={SIG_S:.1f}, ego 시작 s={_ego['s']:.1f} (차로 {lane_len:.1f}m)")
     for i, s0 in enumerate(car_s):
         x, y, z, yaw = lane_at(s0)
         _make_actor(f"/World/Actors/car_{i}", VEHICLE_USD,
@@ -412,6 +414,44 @@ def move_actors():
         a["y"] += a["vy"] * DT
         UsdGeom.XformCommonAPI(a["prim"]).SetTranslate(
             Gf.Vec3d(a["x"], a["y"], a["z"]))
+
+
+# ── ego 폐루프 종방향 주행 (차로 추종 + 신호/전방장애물 반응) ────────────────
+_ego = {"s": 0.0, "v": 0.0}   # 차로 arc-length, 속도(m/s)
+
+
+def ego_step(sig_state):
+    """ego가 차로를 따라 주행하며 적색신호·전방차량/보행자에 감속/정지.
+    반환: (x, y, z, yaw, v)."""
+    ex, ey, ez, eyaw = lane_at(_ego["s"])
+    yr = np.radians(eyaw)
+    fx, fy = np.cos(yr), np.sin(yr)        # 진행방향
+    vt = SPEED_MPS                          # 목표속도
+    reason = "cruise"
+    # 1) 신호 정지 (V2I) — 정지선 4m 전
+    if sig_state and sig_state["phase"] != "green" and _ego["s"] < SIG_S:
+        d = SIG_S - 4.0 - _ego["s"]
+        if d < vt * 2:
+            vt = min(vt, max(0.0, d))
+            reason = "signal"
+    # 2) 전방 장애물 (V2V/충돌회피) — 차로폭 내 가장 가까운 앞 객체
+    fwd_min = 1e9
+    for a in _ACTORS:
+        rx, ry = a["x"] - ex, a["y"] - ey
+        fd = rx * fx + ry * fy             # 전방 투영거리
+        lat = abs(-rx * fy + ry * fx)      # 측면 이격
+        if fd > 0 and lat < 2.8 and fd < fwd_min:
+            fwd_min = fd
+    if fwd_min < 18.0:                      # 18m 내 전방 차량/보행자
+        vt = min(vt, max(0.0, fwd_min - 6.0))   # 6m 앞 정지
+        reason = "lead" if reason == "cruise" else reason
+    # 가감속 (±)
+    ACC, DEC = 3.0, 6.0
+    dv = vt - _ego["v"]
+    _ego["v"] = max(0.0, _ego["v"] + max(-DEC * DT, min(ACC * DT, dv)))
+    _ego["s"] = min(_ego["s"] + _ego["v"] * DT, float(_LANE_CUM[-1]) - 1.0)
+    x, y, z, yaw = lane_at(_ego["s"])
+    return x, y, z + 0.5, yaw, _ego["v"], reason
 
 
 n_actors = spawn_actors(waypoints)
@@ -834,19 +874,22 @@ def make_composite(cam_imgs, ld_img, us_img, seg_img, depth_img, fi):
 
 # ── 메인 루프 ─────────────────────────────────────────────────────────────────
 import traceback
+_ego["v"] = SPEED_MPS   # ego 초기 주행속도
 log(f"=== 수집 시작: {NUM_FRAMES}프레임 ===")
 for fi in range(NUM_FRAMES):
   try:
-    x, y, z, yaw = waypoints[fi]
-    move_ego(x, y, z, yaw)
     move_actors()  # VRU 모션 (정적 액터는 무변화)
     sig_state = update_traffic(fi * TDT)  # 신호 위상 + 주행차량 폐루프
+    # ego 폐루프 주행: 차로 추종 + 적색신호/전방장애물 반응
+    px, py = lane_at(_ego["s"])[:2]
+    x, y, z, yaw, ego_spd, ego_reason = ego_step(sig_state)
+    move_ego(x, y, z, yaw)
     if sig_state is not None:
         accumulate_v2x(fi, x, y, yaw, sig_state)
-    # ego 속도 벡터 (다음 웨이포인트 기준) → TTC 계산
-    nx, ny = waypoints[min(fi + 1, len(waypoints) - 1)][:2]
-    ego_vx, ego_vy = (nx - x) / DT, (ny - y) / DT
+    # ego 속도 벡터 (실제 이동량) → TTC 계산
+    ego_vx, ego_vy = (x - px) / DT, (y - py) / DT
     ttc, ttc_rng, ttc_phase = compute_ttc(x, y, ego_vx, ego_vy)
+    log(f"  frame {fi}: ego v={ego_spd:.1f}m/s ({ego_reason})")
 
     for name in _CAM_LOCAL:
         pos, look = cam_pose(name, x, y, z, yaw)
@@ -908,8 +951,9 @@ for fi in range(NUM_FRAMES):
         "environment": {"lighting": LIGHTING, "weather": WEATHER},
         "ego": {"x": float(x), "y": float(y), "z": float(z),
                 "yaw_deg": float(yaw)},
-        "speed_kph": SPEED_KPH,
-        "distance_m": float(fi * DIST_STEP),
+        "speed_kph": round(ego_spd * 3.6, 1),
+        "ego_action": ego_reason,
+        "distance_m": round(float(_ego["s"]), 2),
         "bbox2d": bbox_json,
         "bbox3d": boxes3d,
         "actors": [{"label": a["label"], "behavior": a["behavior"],
