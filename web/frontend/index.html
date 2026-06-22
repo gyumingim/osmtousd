@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>구미 디지털트윈 합성데이터 포털</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen">
+<header class="border-b border-slate-700 px-6 py-4">
+  <h1 class="text-2xl font-bold">구미 1산단 디지털트윈 — 합성데이터 포털</h1>
+  <p class="text-slate-400 text-sm">Isaac Sim 기반 자율주행 합성 데이터셋 카탈로그</p>
+</header>
+
+<main class="px-6 py-6 max-w-7xl mx-auto">
+  <!-- 통계 -->
+  <section id="stats" class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6"></section>
+
+  <!-- 필터 -->
+  <div class="flex gap-3 mb-4 items-center">
+    <label class="text-sm text-slate-400">시나리오</label>
+    <select id="filter" class="bg-slate-800 border border-slate-600 rounded px-3 py-1 text-sm">
+      <option value="">전체</option>
+      <option value="scenario_01">① 극한기상</option>
+      <option value="scenario_02">② AMR 물류</option>
+      <option value="scenario_03">③ VRU</option>
+      <option value="scenario_04">④ V2X</option>
+      <option value="scenario_05">⑤ 사고·충돌</option>
+    </select>
+    <span id="count" class="text-sm text-slate-400"></span>
+  </div>
+
+  <!-- 데이터셋 그리드 -->
+  <section id="grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></section>
+</main>
+
+<!-- 상세 모달 -->
+<div id="modal" class="hidden fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
+  <div class="bg-slate-800 rounded-lg max-w-3xl w-full max-h-[90vh] overflow-auto p-5">
+    <div class="flex justify-between items-start mb-3">
+      <h2 id="m-title" class="text-xl font-bold"></h2>
+      <button onclick="closeModal()" class="text-slate-400 hover:text-white text-2xl leading-none">&times;</button>
+    </div>
+    <img id="m-img" class="w-full rounded mb-3 bg-slate-900" />
+    <pre id="m-meta" class="text-xs bg-slate-900 rounded p-3 overflow-auto"></pre>
+    <a id="m-dl" class="inline-block mt-3 bg-emerald-600 hover:bg-emerald-500 px-4 py-2 rounded text-sm font-semibold">ZIP 다운로드</a>
+  </div>
+</div>
+
+<script>
+const API = "";  // 동일 오리진
+
+async function loadStats() {
+  const r = await fetch(`${API}/api/stats/scenarios`);
+  const d = await r.json();
+  const totFrames = d.scenarios.reduce((a, s) => a + s.frames, 0);
+  const totDs = d.scenarios.reduce((a, s) => a + s.datasets, 0);
+  const el = document.getElementById("stats");
+  el.innerHTML = `
+    <div class="bg-slate-800 rounded p-3"><div class="text-2xl font-bold">${totDs}</div><div class="text-xs text-slate-400">데이터셋</div></div>
+    <div class="bg-slate-800 rounded p-3"><div class="text-2xl font-bold">${totFrames}</div><div class="text-xs text-slate-400">총 프레임</div></div>
+  ` + d.scenarios.map(s => `
+    <div class="bg-slate-800 rounded p-3"><div class="text-lg font-bold">${s.frames}</div><div class="text-xs text-slate-400">${s.name||s.scenario}</div></div>
+  `).join("");
+}
+
+async function loadDatasets() {
+  const sc = document.getElementById("filter").value;
+  const q = sc ? `?scenario=${sc}` : "";
+  const r = await fetch(`${API}/api/datasets${q}`);
+  const d = await r.json();
+  document.getElementById("count").textContent = `${d.count}개`;
+  document.getElementById("grid").innerHTML = d.datasets.map(ds => `
+    <div class="bg-slate-800 rounded-lg overflow-hidden cursor-pointer hover:ring-2 ring-emerald-500" onclick="openModal('${ds.id}')">
+      <img src="${API}/api/datasets/${ds.id}/preview" class="w-full h-40 object-cover bg-slate-900" loading="lazy"/>
+      <div class="p-3">
+        <div class="font-semibold">${ds.scenario_name || ds.scenario}</div>
+        <div class="text-xs text-slate-400">${ds.variant} · ${ds.frame_count}프레임 · ${(ds.size_bytes/1e6).toFixed(1)}MB</div>
+        <div class="mt-1 flex gap-1 flex-wrap">
+          ${Object.entries(ds.environment||{}).map(([k,v])=>`<span class="text-[10px] bg-slate-700 rounded px-1.5 py-0.5">${v}</span>`).join("")}
+        </div>
+      </div>
+    </div>
+  `).join("");
+}
+
+async function openModal(id) {
+  const r = await fetch(`${API}/api/datasets/${id}`);
+  const m = await r.json();
+  document.getElementById("m-title").textContent = `${m.scenario_name} — ${m.variant}`;
+  document.getElementById("m-img").src = `${API}/api/datasets/${id}/preview`;
+  document.getElementById("m-meta").textContent = JSON.stringify(m, null, 2);
+  document.getElementById("m-dl").href = `${API}/api/datasets/${id}/download`;
+  document.getElementById("modal").classList.remove("hidden");
+}
+function closeModal(){ document.getElementById("modal").classList.add("hidden"); }
+
+document.getElementById("filter").addEventListener("change", loadDatasets);
+loadStats(); loadDatasets();
+</script>
+</body>
+</html>
