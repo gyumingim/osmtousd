@@ -33,6 +33,7 @@ SPEED_MPS  = SPEED_KPH / 3.6
 DT         = 1.0 / 10
 DIST_STEP  = SPEED_MPS * DT
 NUM_FRAMES = int(os.environ.get("NUM_FRAMES", "10"))
+ACTOR_MODE = os.environ.get("ACTOR_MODE", "static")  # static/vru/collision/traffic
 CAM_W, CAM_H = 640, 360
 LIDAR_CONFIG = "Example_Rotary"   # 여러 예제에서 검증된 config
 
@@ -112,23 +113,35 @@ def build_path():
         return None
     bcent = _building_centroids()
 
-    # 40m내 건물 최다 도로점이 속한 커브 선택 + 그 지점부터 시작
-    best_curve, best_i, best_cnt = None, 0, -1
-    for c in rg.GetChildren():
-        pts = c.GetAttribute("points").Get()
-        if pts is None or len(pts) < 2:
-            continue
-        a = np.array(pts)
-        if len(bcent) == 0:
-            best_curve, best_i = a, 0
-            break
-        for i in range(0, len(a), 2):
-            cnt = int((np.linalg.norm(bcent - a[i, :2], axis=1) < 40).sum())
-            if cnt > best_cnt:
-                best_cnt, best_curve, best_i = cnt, a, i
+    # traffic 모드는 긴 차로 필요 → 가장 긴 커브. 그 외엔 건물 밀집 구간.
+    if ACTOR_MODE == "traffic":
+        best_curve, best_i, best_len = None, 0, -1.0
+        for c in rg.GetChildren():
+            pts = c.GetAttribute("points").Get()
+            if pts is None or len(pts) < 2:
+                continue
+            a = np.array(pts)
+            ln = np.linalg.norm(np.diff(a[:, :2], axis=0), axis=1).sum()
+            if ln > best_len:
+                best_len, best_curve, best_i = ln, a, 0
+        print(f"  traffic 차로: 최장 커브 {best_len:.1f}m")
+    else:
+        best_curve, best_i, best_cnt = None, 0, -1
+        for c in rg.GetChildren():
+            pts = c.GetAttribute("points").Get()
+            if pts is None or len(pts) < 2:
+                continue
+            a = np.array(pts)
+            if len(bcent) == 0:
+                best_curve, best_i = a, 0
+                break
+            for i in range(0, len(a), 2):
+                cnt = int((np.linalg.norm(bcent - a[i, :2], axis=1) < 40).sum())
+                if cnt > best_cnt:
+                    best_cnt, best_curve, best_i = cnt, a, i
+        print(f"  밀집 시작: 40m내 건물 {best_cnt}개")
     if best_curve is None:
         return None
-    print(f"  밀집 시작: 40m내 건물 {best_cnt}개")
 
     # 시작점부터 끝까지 경로 (모자라면 처음으로 순환)
     seg = best_curve[best_i:]
@@ -136,6 +149,8 @@ def build_path():
         seg = best_curve
     d = np.concatenate([[0], np.cumsum(
         np.linalg.norm(np.diff(seg[:, :2], axis=0), axis=1))])
+    global _LANE, _LANE_CUM
+    _LANE, _LANE_CUM = seg, d   # 차로(arc-length) — traffic 차량 주행용
     s   = np.linspace(0, min(d[-1], DIST_STEP * NUM_FRAMES), NUM_FRAMES + 1)
     wx  = np.interp(s, d, seg[:, 0])
     wy  = np.interp(s, d, seg[:, 1])
@@ -144,6 +159,22 @@ def build_path():
     dy  = np.diff(wy, append=wy[-1] + (wy[-1] - wy[-2]))
     yaw = np.degrees(np.arctan2(dy, dx))
     return list(zip(wx, wy, wz, yaw))
+
+
+_LANE = None
+_LANE_CUM = None
+
+
+def lane_at(s):
+    """차로 arc-length s → (x, y, z, yaw)."""
+    s = float(max(0.0, min(s, _LANE_CUM[-1])))
+    x = float(np.interp(s, _LANE_CUM, _LANE[:, 0]))
+    y = float(np.interp(s, _LANE_CUM, _LANE[:, 1]))
+    z = float(np.interp(s, _LANE_CUM, _LANE[:, 2]))
+    s2 = min(s + 1.0, float(_LANE_CUM[-1]))
+    x2 = float(np.interp(s2, _LANE_CUM, _LANE[:, 0]))
+    y2 = float(np.interp(s2, _LANE_CUM, _LANE[:, 1]))
+    return x, y, z, float(np.degrees(np.arctan2(y2 - y, x2 - x)))
 
 
 waypoints = build_path()
@@ -163,7 +194,6 @@ PED_USDS = [
 ]
 
 
-ACTOR_MODE = os.environ.get("ACTOR_MODE", "static")  # static / vru
 _ACTORS = []  # [{"path","prim","x","y","z","yaw","vx","vy","label","behavior"}]
 
 
@@ -242,10 +272,110 @@ def _spawn_collision(wps):
                 "vehicle", float(vel[0]), float(vel[1]), "crossing")
 
 
+# ── 신호등 + 주행차량 + 폐루프 V2X (ACTOR_MODE=traffic) ──────────────────────
+SIG_S = 45.0                       # 신호 정지선 (차로 arc-length)
+# 적색→녹색→황색: 차량이 적색에 줄서고 녹색에 방출되는 폐루프 시연
+SIG_CYCLE = [("red", 5.0), ("green", 5.0), ("yellow", 1.5)]
+TDT = 0.7                          # traffic 프레임당 진행 시간(s)
+_TRAFFIC = []                      # [{a, s, v}]
+_SIGNAL = None
+_SIG_COL = {"green": (0.1, 0.9, 0.1), "yellow": (0.9, 0.8, 0.1),
+            "red": (0.9, 0.1, 0.1)}
+
+
+def signal_phase(t):
+    tot = sum(d for _, d in SIG_CYCLE)
+    tm = t % tot
+    for ph, d in SIG_CYCLE:
+        if tm < d:
+            return ph, round(d - tm, 1)
+        tm -= d
+    return "red", 0.0
+
+
+def _spawn_traffic(wps):
+    """기능형 신호등(색 변화) + 신호 뒤 줄서는 주행차량 3대 (차로 길이 적응)."""
+    global _SIGNAL, SIG_S
+    lane_len = float(_LANE_CUM[-1])
+    SIG_S = min(45.0, lane_len * 0.85)        # 신호 정지선
+    sx, sy, sz, _ = lane_at(SIG_S)
+    sig = UsdGeom.Sphere.Define(stage, "/World/TrafficSignal/head")
+    sig.CreateRadiusAttr(1.2)
+    UsdGeom.XformCommonAPI(sig).SetTranslate(Gf.Vec3d(sx, sy, sz + 5.0))
+    sig.CreateDisplayColorAttr([Gf.Vec3f(*_SIG_COL["red"])])
+    add_update_semantics(stage.GetPrimAtPath("/World/TrafficSignal"),
+                         "traffic_light")
+    _SIGNAL = sig
+    print(f"  신호 정지선 s={SIG_S:.1f} (차로 {lane_len:.1f}m)")
+    car_s = [s for s in (SIG_S - 28, SIG_S - 18, SIG_S - 8) if s > 1.0]
+    for i, s0 in enumerate(car_s):
+        x, y, z, yaw = lane_at(s0)
+        _make_actor(f"/World/Actors/car_{i}", VEHICLE_USD,
+                    x, y, z, yaw, "vehicle", 0.0, 0.0, "driving")
+        _TRAFFIC.append({"a": _ACTORS[-1], "s": s0, "v": 6.0})
+
+
+def update_traffic(t):
+    """신호 위상 갱신 + 차량 종방향 제어(적색정지·앞차추종) → 폐루프."""
+    if not _TRAFFIC:
+        return None
+    phase, ttc = signal_phase(t)
+    _SIGNAL.GetDisplayColorAttr().Set([Gf.Vec3f(*_SIG_COL[phase])])
+    CRUISE, GAP, ACC, DEC = 6.0, 8.0, 4.0, 6.0
+    veh = sorted(_TRAFFIC, key=lambda c: -c["s"])   # 선두 먼저
+    for idx, c in enumerate(veh):
+        vt = CRUISE
+        if phase != "green" and c["s"] < SIG_S:      # 신호 정지(V2I 반응)
+            vt = min(vt, max(0.0, SIG_S - 3.0 - c["s"]))   # 정지선 3m 전 제동
+        if idx > 0:                                   # 앞차 간격 좁으면 감속(V2V)
+            gap = veh[idx - 1]["s"] - c["s"]
+            if gap < GAP:
+                vt = min(vt, veh[idx - 1]["v"] * gap / GAP)
+        dv = vt - c["v"]
+        c["v"] = max(0.0, c["v"] + max(-DEC * TDT, min(ACC * TDT, dv)))
+        c["s"] += c["v"] * TDT
+        x, y, z, yaw = lane_at(c["s"])
+        a = c["a"]
+        a["x"], a["y"], a["yaw"] = x, y, yaw
+        api = UsdGeom.XformCommonAPI(a["prim"])
+        api.SetTranslate(Gf.Vec3d(x, y, z))
+        api.SetRotate(Gf.Vec3f(0, 0, yaw),
+                      UsdGeom.XformCommonAPI.RotationOrderXYZ)
+    return {"phase": phase, "time_to_change": ttc, "signal_s": SIG_S}
+
+
+_V2X = []
+
+
+def accumulate_v2x(fi, ex, ey, eyaw, sig):
+    """폐루프 V2X 메시지 누적: SPaT(실제 신호)·BSM·V2V."""
+    ts = round(fi * TDT, 2)
+    _V2X.append({"type": "SPaT", "sender": "RSU_signal_01", "frame": fi,
+                 "timestamp": ts, "phase": sig["phase"],
+                 "time_to_change_s": sig["time_to_change"]})
+    agents = [("ego", ex, ey, eyaw)]
+    for i, c in enumerate(_TRAFFIC):
+        agents.append((f"veh_{i}", c["a"]["x"], c["a"]["y"], c["a"]["yaw"]))
+    for vid, ax, ay, ah in agents:
+        _V2X.append({"type": "BSM", "sender": vid, "frame": fi,
+                     "timestamp": ts, "x": round(ax, 2), "y": round(ay, 2),
+                     "heading": round(ah, 1)})
+    for i in range(len(agents)):
+        for j in range(i + 1, len(agents)):
+            rng = float(np.hypot(agents[i][1] - agents[j][1],
+                                 agents[i][2] - agents[j][2]))
+            if rng <= 30.0:
+                _V2X.append({"type": "V2V", "from": agents[i][0],
+                             "to": agents[j][0], "frame": fi, "timestamp": ts,
+                             "range_m": round(rng, 2),
+                             "alert": "proximity" if rng > 8
+                             else "forward_collision_warning"})
+
+
 def spawn_actors(wps):
     UsdGeom.Xform.Define(stage, "/World/Actors")
-    {"vru": _spawn_vru, "collision": _spawn_collision}.get(
-        ACTOR_MODE, _spawn_static)(wps)
+    {"vru": _spawn_vru, "collision": _spawn_collision,
+     "traffic": _spawn_traffic}.get(ACTOR_MODE, _spawn_static)(wps)
     return len(_ACTORS)
 
 
@@ -715,6 +845,9 @@ for fi in range(NUM_FRAMES):
     x, y, z, yaw = waypoints[fi]
     move_ego(x, y, z, yaw)
     move_actors()  # VRU 모션 (정적 액터는 무변화)
+    sig_state = update_traffic(fi * TDT)  # 신호 위상 + 주행차량 폐루프
+    if sig_state is not None:
+        accumulate_v2x(fi, x, y, yaw, sig_state)
     # ego 속도 벡터 (다음 웨이포인트 기준) → TTC 계산
     nx, ny = waypoints[min(fi + 1, len(waypoints) - 1)][:2]
     ego_vx, ego_vy = (nx - x) / DT, (ny - y) / DT
@@ -788,6 +921,7 @@ for fi in range(NUM_FRAMES):
                     "x": round(float(a["x"]), 2), "y": round(float(a["y"]), 2),
                     "yaw": round(float(a["yaw"]), 1)} for a in _ACTORS],
         "ttc": {"ttc_s": ttc, "min_range_m": ttc_rng, "phase": ttc_phase},
+        "signal": sig_state,
         "lidar_pts": int(len(pts)) if pts is not None else 0,
         "proximity_m": {lbl: float(v) for lbl, v in us_vals},
         "radar_detections": len(radar_rows),
@@ -817,6 +951,14 @@ for fi in range(NUM_FRAMES):
     log(f"  frame {fi}: 저장 완료")
   except Exception as e:
     log(f"  frame {fi} 예외: {e}\n{traceback.format_exc()}")
+
+# 폐루프 V2X 로그 저장 (traffic 모드)
+if _V2X:
+    with open(os.path.join(OUTPUT_DIR, "v2x_log.json"), "w",
+              encoding="utf-8") as f:
+        json.dump({"signal_cycle": SIG_CYCLE, "dt": TDT,
+                   "messages": clean(_V2X)}, f, indent=2, ensure_ascii=False)
+    log(f"V2X 로그 {len(_V2X)}개 저장 (v2x_log.json)")
 
 sim_ctx.stop()
 print(f"\n=== 완료: output/frame_0000~{NUM_FRAMES-1:04d}.png/.json ===")
