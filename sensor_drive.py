@@ -599,6 +599,7 @@ print("워밍업 완료")
 
 # ── LiDAR: 360°×다채널 raycast → 센서-로컬 점구름 (x 전방, y 좌) ─────────────
 def get_lidar_pts(ex, ey, ez, yaw_deg):
+    """센서-로컬 점구름 (x,y,z,intensity). intensity=입사각×거리감쇠."""
     yr = np.radians(yaw_deg)
     cy, sy = np.cos(yr), np.sin(yr)
     sz = ez + 2.2                       # 센서 높이
@@ -614,7 +615,16 @@ def get_lidar_pts(ex, ey, ez, yaw_deg):
                                             LIDAR_MAX)
             if h and h.get("hit"):
                 d = h["distance"]
-                pts.append((lx * d, ly * d, lz * d))   # 센서-로컬 점
+                # intensity: 표면 입사각(cos) × 거리감쇠
+                n = h.get("normal")
+                cos_i = 0.7
+                if n is not None:
+                    nv = np.array([n[0], n[1], n[2]], dtype=float)
+                    nn = np.linalg.norm(nv)
+                    if nn > 1e-6:
+                        cos_i = abs(float(np.dot([wx, wy, lz], nv / nn)))
+                inten = cos_i * (1.0 - 0.5 * d / LIDAR_MAX) * 255.0
+                pts.append((lx * d, ly * d, lz * d, round(inten, 1)))
     return np.array(pts, dtype=np.float32) if pts else None
 
 
@@ -623,11 +633,12 @@ _WEATHER_NOISE = {"rain": (0.10, 0.25), "fog": (0.05, 0.50)}
 
 
 def degrade_lidar(pts):
-    """WEATHER에 따라 거리 노이즈 + 랜덤 포인트 드롭."""
+    """WEATHER에 따라 거리 노이즈(xyz만) + 랜덤 포인트 드롭."""
     if pts is None or WEATHER not in _WEATHER_NOISE:
         return pts
     sigma, drop = _WEATHER_NOISE[WEATHER]
-    pts = pts + np.random.normal(0, sigma, pts.shape).astype(pts.dtype)
+    pts = pts.copy()
+    pts[:, :3] += np.random.normal(0, sigma, (len(pts), 3)).astype(pts.dtype)
     keep = np.random.random(len(pts)) > drop
     return pts[keep]
 
@@ -671,24 +682,34 @@ def _cast(ox, oy, oz, dx, dy, dz, maxd):
     return None, None
 
 
-def sense_radar(ex, ey, ez, yaw_deg, max_r=100.0):
-    """전방 섹터 레이더: 빔별 거리 + 라디얼 속도(접근+). actor 속도 활용."""
+_RCS = {"vehicle": 10.0, "pedestrian": -5.0}   # 표적별 RCS(dBsm)
+
+
+def sense_radar(ex, ey, ez, yaw_deg, ego_spd=0.0, fov=60, beams=15,
+                max_r=120.0):
+    """FMCW 자동차 레이더 근사: 표적별 거리·방위·상대속도·RCS·SNR.
+    상대 라디얼 속도 = (표적속도 - ego속도)의 LOS 성분(접근+)."""
     yr = np.radians(yaw_deg)
+    evx, evy = ego_spd * np.cos(yr), ego_spd * np.sin(yr)   # ego 속도벡터
     rows = []
-    for beam, ang in enumerate(np.linspace(-40, 40, 9)):
+    for beam, ang in enumerate(np.linspace(-fov, fov, beams)):
         ar = yr + np.radians(ang)
-        dx, dy = np.cos(ar), np.sin(ar)
+        dx, dy = np.cos(ar), np.sin(ar)         # LOS
         dist, coll = _cast(ex, ey, ez + 0.5, dx, dy, 0.0, max_r)
         if dist is None:
             continue
-        rv = 0.0  # 정지물=0, 이동 actor면 LOS 속도성분
+        tvx, tvy, rcs = 0.0, 0.0, 20.0          # 정지구조물 기본(큰 RCS)
         for a in _ACTORS:
             if a["path"] in coll:
-                rv = -(a["vx"] * dx + a["vy"] * dy)
+                tvx, tvy = a["vx"], a["vy"]
+                rcs = _RCS.get(a["label"], 5.0)
                 break
+        rv = -((tvx - evx) * dx + (tvy - evy) * dy)   # 상대 라디얼속도
+        snr = 80.0 + rcs - 40.0 * np.log10(max(1.0, dist))   # 레이더방정식
         rows.append({"beam": beam, "azimuth_deg": round(float(ang), 1),
                      "range_m": round(dist, 2),
-                     "radial_velocity_mps": round(rv, 2)})
+                     "radial_velocity_mps": round(float(rv), 2),
+                     "rcs_dbsm": round(rcs, 1), "snr_db": round(float(snr), 1)})
     return rows
 
 
@@ -711,14 +732,22 @@ def sense_ultrasonic(ex, ey, ez, yaw_deg, max_r=5.0):
 
 
 def write_pcd(path, pts):
-    """포인트클라우드 → ASCII PCD (제안서 .pcd 포맷)."""
+    """포인트클라우드 → ASCII PCD (x y z intensity)."""
     n = 0 if pts is None else len(pts)
+    has_i = n and pts.shape[1] >= 4
     with open(path, "w") as f:
-        f.write("# .PCD v0.7 - Point Cloud Data\nVERSION 0.7\n"
-                "FIELDS x y z\nSIZE 4 4 4\nTYPE F F F\nCOUNT 1 1 1\n"
+        fields = "x y z intensity" if has_i else "x y z"
+        sz = "4 4 4 4" if has_i else "4 4 4"
+        typ = "F F F F" if has_i else "F F F"
+        cnt = "1 1 1 1" if has_i else "1 1 1"
+        f.write(f"# .PCD v0.7 - Point Cloud Data\nVERSION 0.7\n"
+                f"FIELDS {fields}\nSIZE {sz}\nTYPE {typ}\nCOUNT {cnt}\n"
                 f"WIDTH {n}\nHEIGHT 1\nVIEWPOINT 0 0 0 1 0 0 0\n"
                 f"POINTS {n}\nDATA ascii\n")
-        if n:
+        if n and has_i:
+            for p in pts:
+                f.write(f"{p[0]:.3f} {p[1]:.3f} {p[2]:.3f} {p[3]:.1f}\n")
+        elif n:
             for p in pts:
                 f.write(f"{p[0]:.3f} {p[1]:.3f} {p[2]:.3f}\n")
 
@@ -937,13 +966,13 @@ for fi in range(NUM_FRAMES):
     # LiDAR / 근접 raycast / Radar / Ultrasonic
     pts = degrade_lidar(get_lidar_pts(x, y, z, yaw))
     us_vals = raycast_us(x, y, z, yaw)
-    radar_rows = sense_radar(x, y, z, yaw)
+    radar_rows = sense_radar(x, y, z, yaw, ego_spd=ego_spd)
     us_rows = sense_ultrasonic(x, y, z, yaw)
     # 제안서 포맷 저장: LiDAR .pcd, Radar/Ultrasonic .csv
     write_pcd(os.path.join(LABELS_DIR, f"frame_{fi:04d}_lidar.pcd"), pts)
     write_csv(os.path.join(LABELS_DIR, f"frame_{fi:04d}_radar.csv"),
               radar_rows, ["beam", "azimuth_deg", "range_m",
-                           "radial_velocity_mps"])
+                           "radial_velocity_mps", "rcs_dbsm", "snr_db"])
     write_csv(os.path.join(LABELS_DIR, f"frame_{fi:04d}_ultrasonic.csv"),
               us_rows, ["sensor", "distance_m", "detected"])
 
