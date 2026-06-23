@@ -62,7 +62,21 @@ cd ~/isaacsim && ENV_WEATHER=fog ACTOR_MODE=vru NUM_FRAMES=10 OUTPUT_SUBDIR=t \
 - 골격 Pose: ✅ 구현됨(`get_poses`, UsdSkel 101관절 + 2D 투영)
 - DB 백엔드: ✅ 구현됨(`web/backend/db.py` SQLite, PG는 connect()만 교체)
 
-## 보행자 걷기 애니 (omni.anim.people) — 연구 메모 (미구현)
+## 보행자 걷기 애니 (omni.anim.people) — 구현됨(기본 OFF), 검증 메모
+
+**구현 완료**(`people_anim.py` + sensor_drive `WALK_ANIM` 게이트, 기본 OFF).
+standalone walk_test로 걷기 코어 검증됨(캐릭터 GoTo→다리 articulate 0.16m).
+**파이프라인내 검증은 GPU CUDA wedge로 미완** → 재부팅 후 `WALK_ANIM=1`로
+VRU 1렌더 확인 → 정상이면 기본 ON 전환. 흐름(검증된 공식 경로):
+- `isaacsim.replicator.agent.core`의 `CharacterUtil`:
+  load_default_biped_to_stage → load_character_usd_to_stage →
+  setup_animation_graph_to_character → setup_python_scripts_to_character
+- command 파일(`<name> GoTo x y 0 _`) +
+  `/exts/omni.anim.people/command_settings/command_file_path` 설정
+- navmesh_enabled=False(직선보행), 타임라인 play 시 behavior가 구동
+- 걷기캐릭터는 `_ACTORS`에 `animated:True`, move_actors는 위치만 동기
+
+### (옛 연구 메모)
 
 omni.anim.people-0.7.9 확장은 **enable OK**. 단 캐릭터에 baked 걷기 클립은 없고
 (런타임 애니그래프 방식), 통합은 다음을 요구하는 큰 작업:
