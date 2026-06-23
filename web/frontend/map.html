@@ -75,9 +75,9 @@ fetch("/api/sim_locations").then(r => r.json()).then(d => {
         ego 주행 <b>${loc.distance_m}m</b> · 데이터셋 ${loc.datasets.length}개
         (클릭→재생):</div>
       <div style="max-height:240px;overflow:auto">${rows}</div></div>`;
-    L.marker(loc.start, { icon, zIndexOffset: 2000 }).addTo(simLayer)
-      .bindTooltip("🎥 " + loc.scenario_name, { direction: "top", offset: [0, -15] })
-      .bindPopup(html, { maxWidth: 330, minWidth: 300 });
+    const mk = L.marker(loc.start, { icon, zIndexOffset: 2000 }).addTo(simLayer)
+      .bindPopup(html, { maxWidth: 330, minWidth: 300, autoClose: true });
+    mk.on("mouseover", () => mk.openPopup());   // 호버 시 클릭과 동일한 팝업
   });
 });
 
