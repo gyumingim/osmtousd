@@ -59,5 +59,19 @@ cd ~/isaacsim && ENV_WEATHER=fog ACTOR_MODE=vru NUM_FRAMES=10 OUTPUT_SUBDIR=t \
 
 - 실 VDS 교통량: `web/backend/traffic.py`의 `simulate_volume`/`simulate_link_volume`
 - 실 LiDAR 모델: `sensor_drive.get_lidar_pts` (현재 raycast)
-- 골격 Pose: sensor_drive에 UsdSkel 관절 쿼리 추가 → 키포인트 라벨
-- DB 백엔드: `web/backend/main.py`의 zip-scan을 SQLAlchemy로 교체
+- 골격 Pose: ✅ 구현됨(`get_poses`, UsdSkel 101관절 + 2D 투영)
+- DB 백엔드: ✅ 구현됨(`web/backend/db.py` SQLite, PG는 connect()만 교체)
+
+## 보행자 걷기 애니 (omni.anim.people) — 연구 메모 (미구현)
+
+omni.anim.people-0.7.9 확장은 **enable OK**. 단 캐릭터에 baked 걷기 클립은 없고
+(런타임 애니그래프 방식), 통합은 다음을 요구하는 큰 작업:
+- 각 보행자에 **AnimationGraph 리타게팅**(Biped_Setup 릭 → 캐릭터 스켈레톤).
+  `CharacterBehavior.init_character()`가 `ag.get_character(prim)` 반환을 요구 →
+  캐릭터가 애니그래프 등록돼야 함.
+- 캐릭터에 `CharacterBehavior`(omni.kit.scripting BehaviorScript) 적용 +
+  command 파일(`GoTo x y z dur` 등). 확장: `.../extscache/omni.anim.people-0.7.9*/`
+- navmesh/queue/custom-command 매니저(확장 init 시 생성).
+- on_play→on_update 루프에서 구동 → sim_ctx.step이 app.update 하므로 동작 가능.
+→ 헤드리스 standalone에서 리타게팅 셋업이 까다로움. 전용 작업 권장.
+대안: 현재는 보행자 위치 이동(슬라이드) + 골격 Pose 라벨로 관절좌표는 정확.
