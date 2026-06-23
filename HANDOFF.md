@@ -99,7 +99,7 @@ python3 pipeline/selfcheck.py
 | 작업 | 방법 | 난이도 |
 |---|---|---|
 | 1만 프레임 생성 | `run_scenario.py --grid full --frames 700` (시간·머신주의) | 실행만 |
-| Pose 2D 투영 | get_poses 3D 키포인트를 카메라로 투영 → 2D 이미지 키포인트 | 하 |
+| 보행자 걷기 애니 | omni.anim.people 연동(헤드리스 까다로움) → 동적 자세 | 중상 |
 | 오토바이 실모델 | Poly Pizza 후보 더 받아 변환(`convert_vehicles.py`)·직립 검증 | 중 |
 | 보행자 걷기 | omni.anim.people 연동(헤드리스 까다로움) | 중상 |
 | PostgreSQL | `main.py` zip스캔 → SQLAlchemy(SQLite로 시작 가능) | 중 |
