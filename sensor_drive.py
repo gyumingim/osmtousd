@@ -247,9 +247,11 @@ _VEH_CFG = {
     "bicycle": {"files": ["bicycle"],    # Poly Pizza CC-BY, 직립·길이=X
                 "scale": (0.0047, 0.0047, 0.0047), "rx": 0.0, "rz": 0.0},
 }
-# 오토바이: 쓸만한 CC0 실모델 부재(받은 것 자세 불안정) → 박스 프록시(2륜 실루엣).
+# 오토바이: 배치 가능한 깨끗한 CC0/CC-BY 실모델 못 찾음(받은 Poly 스쿠터는
+#   지오메트리가 원점서 멀어 per-model 센터링 필요) → 박스 프록시(2륜 실루엣).
 _PROXY_TYPES = {
     "motorcycle": ((2.1, 0.5, 0.95), None, (0.10, 0.10, 0.12)),
+    "_default":   ((2.1, 0.5, 0.95), None, (0.10, 0.10, 0.12)),
 }
 import random as _rnd
 _rnd.seed(7)
@@ -279,7 +281,7 @@ def _make_vehicle(path, kind, x, y, z, yaw, vx=0.0, vy=0.0, behavior="static"):
         api.SetScale(Gf.Vec3f(*cfg["scale"]))
     else:                                          # 박스 프록시(오토바이/자전거)
         (L, W, H), cabin, color = _PROXY_TYPES.get(kind,
-                                                   _PROXY_TYPES["motorcycle"])
+                                                   _PROXY_TYPES["_default"])
         _box(path, "body", L, W, H, 0.0, 0.0, H / 2, color)
         if cabin:
             cl, cw, ch, cx = cabin
