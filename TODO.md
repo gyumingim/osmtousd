@@ -26,7 +26,8 @@
 
 > 진행 메모(갱신): 기능 전반 구현·검증 완료. **남은 격차**:
 > ① 대량생성 1만 프레임 — 코드는 준비(`run_scenario.py`), 실행만 필요
-> ② 골격 Pose 라벨(UsdSkel), 오토바이 실모델, 보행자 걷기 애니(omni.anim.people)
+> ② 오토바이 실모델, 보행자 걷기 애니(omni.anim.people) — 골격 Pose는 구현완료
+>    (Pose는 정지자세 키포인트, 걷기 애니 붙으면 동적 자세까지)
 > ③ 외부·인프라 의존(코드밖): 실 VDS(ITS API키), 기업 PoC, 슈퍼컴 실계정
 > (DB는 SQLite로 구현 완료 — `web/backend/db.py`, PostgreSQL 전환은 connect()만 교체)
 > 주의: Isaac Sim 동시 2개 실행 금지(GPU 14GB 한계 → ACPI gpe17 폭주 경험).
@@ -113,7 +114,7 @@
 
 - [ ] 보행자·이륜차 3D 에셋 + 애니메이션 통합
 - [ ] 행동 스크립팅: 정상 횡단 / 무단횡단 / 이륜차 끼어들기
-- [ ] 보행자 궤적·자세(Pose) 라벨 자동 생성
+- [x] 보행자 궤적·자세(Pose) 라벨 자동 생성 (궤적=gen_trajectories, 자세=UsdSkel 101관절)
 - [ ] 교차로·횡단보도·산단 진출입로 중심 배치
 - [ ] 파일: `scenarios/scenario_03_vru.py`
 

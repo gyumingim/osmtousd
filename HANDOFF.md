@@ -85,7 +85,8 @@ python3 pipeline/selfcheck.py
 **시뮬/placeholder(코드밖 의존)**:
 - 교통량·혼잡도·VDS = **시뮬**(실 ITS/VDS API키 필요). 노드/도로/신호등 **위치는 V-World 실데이터**.
   교체점: `web/backend/traffic.py`.
-- 골격 Pose 라벨 없음(UsdSkel 쿼리 필요), 보행자 걷기 애니 없음(omni.anim.people).
+- 골격 Pose 라벨 **있음**(UsdSkel 101관절 키포인트, `get_poses`). 단 걷기 애니
+  없어 정지자세(omni.anim.people 붙이면 동적). 2D 이미지 투영은 추후.
 - 오토바이만 박스 프록시(쓸만한 CC0 실모델 못 찾음). 나머지 이륜차=자전거 실모델.
 - 카탈로그 DB는 **SQLite**(`web/backend/db.py`, 의존성0). PostgreSQL 전환은
   `db.connect()`만 psycopg로 교체(스키마 호환). React는 스캐폴드만, 실제는 정적 SPA.
@@ -98,7 +99,7 @@ python3 pipeline/selfcheck.py
 | 작업 | 방법 | 난이도 |
 |---|---|---|
 | 1만 프레임 생성 | `run_scenario.py --grid full --frames 700` (시간·머신주의) | 실행만 |
-| 골격 Pose 라벨 | sensor_drive에 UsdSkel 관절 쿼리 추가 → 키포인트 | 중 |
+| Pose 2D 투영 | get_poses 3D 키포인트를 카메라로 투영 → 2D 이미지 키포인트 | 하 |
 | 오토바이 실모델 | Poly Pizza 후보 더 받아 변환(`convert_vehicles.py`)·직립 검증 | 중 |
 | 보행자 걷기 | omni.anim.people 연동(헤드리스 까다로움) | 중상 |
 | PostgreSQL | `main.py` zip스캔 → SQLAlchemy(SQLite로 시작 가능) | 중 |
@@ -127,4 +128,4 @@ ZIP: `data/`(합성PNG) `labels/`(JSON·세그·깊이·pcd·csv·궤적) `meta/
 ## 8. 현재 상태 한 줄
 
 기능 ~90% 완성·검증, 14 데이터셋 생성·패키징·웹반영 완료. 미달은 ①대량생성(실행만)
-②골격Pose·오토바이실모델 ③외부의존(실VDS·PoC·DB). git은 origin보다 52커밋 앞섬.
+②오토바이실모델·걷기애니 ③외부의존(실VDS·PoC). DB·골격Pose는 완료.

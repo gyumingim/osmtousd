@@ -23,6 +23,7 @@ labels/  frame_NNNN.json|yaml    프레임 라벨(아래 3절)
          frame_NNNN_radar.csv    Radar 검지(beam,azimuth,range,velocity,rcs,snr)
          frame_NNNN_ultrasonic.csv  초음파(sensor,distance,detected)
          trajectories.json       객체·ego 궤적 트랙
+         frame_NNNN_pose.json    (보행자 있을 때) 골격 관절 키포인트(자세)
          v2x_log.json            (V2X) 링크별 통신 로그
 meta/    metadata.json           스펙·통계
          calibration.json        센서 내·외부 파라미터
