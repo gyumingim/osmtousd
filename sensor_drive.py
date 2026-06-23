@@ -292,7 +292,8 @@ def _make_ped(path, usd, x, y, z, yaw, goal_xy, vx=0.0, vy=0.0,
     """보행자: WALK_ANIM이면 걷는 캐릭터(GoTo), 아니면 정적/슬라이드 fallback."""
     if WALK_ANIM and _WALK_READY:
         name = path.rsplit("/", 1)[-1]
-        cprim = people_anim.spawn_walking_ped(usd, x, y, z + 0.5, yaw,
+        # 정적 fallback과 동일한 지면 z (캐릭터 원점=발). z+0.5면 0.5m 부유.
+        cprim = people_anim.spawn_walking_ped(usd, x, y, z, yaw,
                                               goal_xy, name)
         if cprim is not None:
             add_update_semantics(cprim, "pedestrian")

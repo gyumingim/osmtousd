@@ -118,7 +118,8 @@ async function openModal(id) {
   document.getElementById("m-dl").href = `${API}/api/datasets/${id}/download`;
   // 플레이어 초기화
   stopPlay();
-  PLAY = { id, n: m.frame_count || 1, cur: 0, timer: null };
+  PLAY = { id, n: m.frame_count || 1, cur: 0, timer: null, view: "analysis" };
+  document.getElementById("m-view").textContent = "🎬 시네마틱";
   const sl = document.getElementById("m-slider");
   sl.max = PLAY.n - 1; sl.value = 0;
   showFrame(0);

@@ -80,6 +80,8 @@ def package_combo(combo_dir):
     parts = combo_dir.rstrip("/").split(os.sep)
     scenario, combo = parts[-2], parts[-1]
     meta = build_metadata(combo_dir, scenario, combo)
+    if meta["frame_count"] == 0:           # 빈 폴더(렌더 실패) → 기존 zip 보존
+        return None, 0, 0
     os.makedirs(PKG_DIR, exist_ok=True)
     zip_path = os.path.join(PKG_DIR, f"{scenario}_{combo}.zip")
 
@@ -121,12 +123,16 @@ def main():
     combos = sorted(d for d in glob.glob(os.path.join(BASE, "scenario_*", "*"))
                     if os.path.isdir(d))
     print(f"=== 패키징: {len(combos)}개 데이터셋 → {PKG_DIR} ===\n")
-    total = 0
+    total = made = 0
     for cd in combos:
         zp, n, sz = package_combo(cd)
+        if zp is None:
+            print(f"  ⏭️  {os.path.basename(cd.rstrip('/'))}: 빈 폴더 — 스킵(기존 보존)")
+            continue
         print(f"  ✅ {os.path.basename(zp)}: {n}프레임 {sz/1e6:.1f}MB")
         total += sz
-    print(f"\n=== 완료: {len(combos)}개 ZIP, 총 {total/1e6:.1f}MB ===")
+        made += 1
+    print(f"\n=== 완료: {made}개 ZIP, 총 {total/1e6:.1f}MB ===")
 
 
 if __name__ == "__main__":
