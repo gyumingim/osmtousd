@@ -45,41 +45,40 @@ L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
   { attribution:"© OpenStreetMap", maxZoom:19 }).addTo(map);
 let MODE = "node", LAYER = L.layerGroup().addTo(map);
 
-// ── 시뮬레이션 수집지점 마커 (구미 1산단 디지털트윈) — 모드 무관 상시 표시 ──
-const SIM_CENTER = [36.102064, 128.376468];
-const simIcon = L.divIcon({
-  className: "sim-pin", iconSize: [34, 34], iconAnchor: [17, 17],
-  html: `<div style="width:34px;height:34px;border-radius:50%;background:#10b981;
-    border:3px solid #fff;display:flex;align-items:center;justify-content:center;
-    font-size:17px;box-shadow:0 0 0 5px rgba(16,185,129,.35);cursor:pointer">🎥</div>`
-});
-const simMarker = L.marker(SIM_CENTER, { icon: simIcon, zIndexOffset: 2000 })
-  .addTo(map)
-  .bindTooltip("🎥 시뮬 수집지점 (클릭)", { direction: "top", offset: [0, -18] })
-  .bindPopup("불러오는 중…", { maxWidth: 360, minWidth: 330 });
-let simHtml = null;
-simMarker.on("click", async () => {
-  if (!simHtml) {
-    const d = await fetch("/api/datasets").then(r => r.json());
-    const rows = d.datasets.map(ds => `
+// ── 시뮬 수집지점: 시나리오별 실제 주행 위치 + 경로 (모드 무관 상시) ──
+const simLayer = L.layerGroup().addTo(map);
+const SIM_COL = ["#10b981", "#3b82f6", "#f59e0b", "#a855f7", "#ef4444"];
+fetch("/api/sim_locations").then(r => r.json()).then(d => {
+  d.locations.forEach((loc, i) => {
+    const col = SIM_COL[i % SIM_COL.length];
+    if (loc.route && loc.route.length > 1)        // 실제 ego 주행경로
+      L.polyline(loc.route, { color: col, weight: 5, opacity: 0.9 })
+        .addTo(simLayer);
+    const icon = L.divIcon({
+      className: "", iconSize: [30, 30], iconAnchor: [15, 15],
+      html: `<div style="width:30px;height:30px;border-radius:50%;background:${col};
+        border:3px solid #fff;display:flex;align-items:center;justify-content:center;
+        font-size:14px;box-shadow:0 0 0 4px ${col}55;cursor:pointer">🎥</div>` });
+    const rows = loc.datasets.map(ds => `
       <a href="/?open=${ds.id}" target="_blank" style="display:flex;gap:8px;
-         align-items:center;padding:5px;border-bottom:1px solid #eee;
+         align-items:center;padding:4px;border-bottom:1px solid #eee;
          text-decoration:none;color:#0f172a">
         <img src="/api/datasets/${ds.id}/preview?frame=0&view=cinematic"
-             style="width:84px;height:47px;object-fit:cover;border-radius:3px;
+             style="width:80px;height:45px;object-fit:cover;border-radius:3px;
              background:#222" loading="lazy"/>
-        <div style="line-height:1.3"><b style="font-size:12px">${ds.scenario_name
-          || ds.scenario}</b><br><span style="font-size:11px;color:#555">${ds.variant}
-          · ${ds.frame_count}프레임</span></div></a>`).join("");
-    simHtml = `<div style="width:330px">
-      <div style="font-weight:700;font-size:13px;margin-bottom:3px">🎥 구미 1산단
-        디지털트윈 — 합성데이터 수집지점</div>
-      <div style="font-size:11px;color:#555;margin-bottom:6px">위도 36.10206°N ·
-        경도 128.37647°E · 공단동/광평동<br>이 지점에서 수집한 데이터셋
-        <b>${d.count}개</b> (클릭 → 재생):</div>
-      <div style="max-height:280px;overflow:auto">${rows}</div></div>`;
-  }
-  simMarker.setPopupContent(simHtml);
+        <span style="font-size:12px"><b>${ds.variant}</b><br>
+          <span style="color:#555">${ds.frame_count}프레임</span></span></a>`).join("");
+    const html = `<div style="width:300px">
+      <div style="font-weight:700;font-size:13px">🎥 ${loc.scenario_name}</div>
+      <div style="font-size:11px;color:#555;margin:3px 0 6px">
+        위도 ${loc.start[0].toFixed(5)}°N · 경도 ${loc.start[1].toFixed(5)}°E<br>
+        ego 주행 <b>${loc.distance_m}m</b> · 데이터셋 ${loc.datasets.length}개
+        (클릭→재생):</div>
+      <div style="max-height:240px;overflow:auto">${rows}</div></div>`;
+    L.marker(loc.start, { icon, zIndexOffset: 2000 }).addTo(simLayer)
+      .bindTooltip("🎥 " + loc.scenario_name, { direction: "top", offset: [0, -15] })
+      .bindPopup(html, { maxWidth: 330, minWidth: 300 });
+  });
 });
 
 // 시간 셀렉터 채우기
