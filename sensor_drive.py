@@ -22,6 +22,7 @@ from isaacsim.core.utils.semantics import add_update_semantics
 from isaacsim.storage.native import get_assets_root_path
 from omni.physx import get_physx_scene_query_interface
 from environment import apply_lighting, apply_weather
+import people_anim
 
 STAGE_PATH = "/home/karma/OSMtoUSD/gumi.usda"
 # OUTPUT_SUBDIR 환경변수로 시나리오별 폴더 분리 (예: scenario_01/day_rain)
@@ -37,6 +38,11 @@ EGO_REACT = os.environ.get("EGO_REACT", "1") == "1"  # 0=전방장애물 무반�
 # 배경 밀도(씬을 붐비게): 주변 차량·보행자 수 (시나리오 액터에 추가)
 AMBIENT_VEH = int(os.environ.get("AMBIENT_VEH", "10"))
 AMBIENT_PED = int(os.environ.get("AMBIENT_PED", "10"))
+# 보행자 걷기 애니(omni.anim.people). 코어 검증완료, 파이프라인내 검증은 GPU복구 후.
+# 안전을 위해 기본 OFF — WALK_ANIM=1로 켜서 VRU 1렌더 확인 후 기본 ON 전환 권장.
+WALK_ANIM = os.environ.get("WALK_ANIM", "0") == "1"
+if WALK_ANIM:
+    people_anim.enable_extensions()
 CAM_W, CAM_H = 640, 360
 
 LABELS_DIR = os.path.join(OUTPUT_DIR, "labels")
@@ -231,6 +237,26 @@ def _make_actor(path, usd, x, y, z, yaw, label, vx=0.0, vy=0.0,
                     "behavior": behavior})
 
 
+_WALK_READY = False   # omni.anim.people biped 셋업 성공 시 True
+
+
+def _make_ped(path, usd, x, y, z, yaw, goal_xy, vx=0.0, vy=0.0,
+              behavior="cross"):
+    """보행자: WALK_ANIM이면 걷는 캐릭터(GoTo), 아니면 정적/슬라이드 fallback."""
+    if WALK_ANIM and _WALK_READY:
+        name = path.rsplit("/", 1)[-1]
+        cprim = people_anim.spawn_walking_ped(usd, x, y, z + 0.5, yaw,
+                                              goal_xy, name)
+        if cprim is not None:
+            add_update_semantics(cprim, "pedestrian")
+            _ACTORS.append({"path": str(cprim.GetPath()), "prim": cprim,
+                            "x": x, "y": y, "z": z, "yaw": yaw,
+                            "vx": 0.0, "vy": 0.0, "label": "pedestrian",
+                            "behavior": behavior, "animated": True})
+            return
+    _make_actor(path, usd, x, y, z, yaw, "pedestrian", vx, vy, behavior)
+
+
 # ── 차량/이륜차 ──────────────────────────────────────────────────────────────
 # 실제 CC0 모델: 승용차·트럭=Kenney Car Kit(Y-up→Rx90 보정), 버스=Poly Pizza(Z-up).
 #   소스마다 축/스케일이 달라 종류별 cfg(files·scale·rx·rz). rx/rz는 이동 시 유지.
@@ -314,9 +340,11 @@ def _spawn_static(wps):
             continue
         x, y, z, yaw = wps[idx]
         yr = np.radians(yaw)
-        _make_actor(f"/World/Actors/ped_{idx}", usd,
-                    x + np.sin(yr) * lat, y - np.cos(yr) * lat, z - 0.5,
-                    yaw, "pedestrian")
+        px, py = x + np.sin(yr) * lat, y - np.cos(yr) * lat
+        # 인도 따라 진행방향으로 6m 걷기
+        goal = (px + np.cos(yr) * 6, py + np.sin(yr) * 6)
+        _make_ped(f"/World/Actors/ped_{idx}", usd, px, py, z - 0.5, yaw,
+                  goal, behavior="walk")
 
 
 def _spawn_vru(wps):
@@ -341,10 +369,12 @@ def _spawn_vru(wps):
             _make_vehicle(f"/World/Actors/{label}_{i}", label,
                           float(start[0]), float(start[1]), z0_ - 0.5,
                           head, float(vel[0]), float(vel[1]), beh)
-        else:
-            _make_actor(f"/World/Actors/{label}_{i}", usd,
-                        float(start[0]), float(start[1]), z0_ - 0.5,
-                        head, label, float(vel[0]), float(vel[1]), beh)
+        else:                                                # 보행자(걷기 횡단)
+            vdn = vdir / (np.linalg.norm(vdir) + 1e-9)
+            goal = (float(start[0] + vdn[0] * 12), float(start[1] + vdn[1] * 12))
+            _make_ped(f"/World/Actors/{label}_{i}", usd,
+                      float(start[0]), float(start[1]), z0_ - 0.5, head,
+                      goal, float(vel[0]), float(vel[1]), beh)
 
 
 def _spawn_collision(wps):
@@ -501,10 +531,12 @@ def _spawn_amr(wps):
     for i, (off, vd, spd) in enumerate([(6.0, -left, 1.3), (-5.0, left, 1.1)]):
         s = base + left * off
         v = vd / (np.linalg.norm(vd) + 1e-9) * spd
-        _make_actor(f"/World/Actors/worker_{i}", PED_USDS[i % len(PED_USDS)],
-                    float(s[0]), float(s[1]), z0_ - 0.5,
-                    float(np.degrees(np.arctan2(v[1], v[0]))),
-                    "pedestrian", float(v[0]), float(v[1]), "worker")
+        vn = v / (np.linalg.norm(v) + 1e-9)
+        goal = (float(s[0] + vn[0] * 10), float(s[1] + vn[1] * 10))
+        _make_ped(f"/World/Actors/worker_{i}", PED_USDS[i % len(PED_USDS)],
+                  float(s[0]), float(s[1]), z0_ - 0.5,
+                  float(np.degrees(np.arctan2(v[1], v[0]))),
+                  goal, float(v[0]), float(v[1]), "worker")
     fs = base + fwd * 8 + left * 4
     fv = -left * 1.5
     _make_actor("/World/Actors/forklift_amr", VEHICLE_USD,
@@ -533,20 +565,29 @@ def _spawn_ambient(wps):
     for j in range(AMBIENT_PED):
         x, y, z, yaw = lane_at(2.0 + span * (j + 0.5) / AMBIENT_PED)
         yr = np.radians(yaw)
+        fwd = np.array([np.cos(yr), np.sin(yr)])
         left = np.array([-np.sin(yr), np.cos(yr)])
         side = 1.0 if j % 2 else -1.0
         off = side * (7.0 + (j % 4) * 1.2)         # 인도
-        _make_actor(f"/World/Ambient/ped_{j}", PED_USDS[j % len(PED_USDS)],
-                    float(x + left[0] * off), float(y + left[1] * off),
-                    z - 0.5, yaw + 90.0 * side, "pedestrian",
-                    0.0, 0.0, "ambient")
+        px, py = x + left[0] * off, y + left[1] * off
+        gd = fwd if j % 2 else -fwd                # 인도 따라 걷기
+        goal = (float(px + gd[0] * 6), float(py + gd[1] * 6))
+        _make_ped(f"/World/Ambient/ped_{j}", PED_USDS[j % len(PED_USDS)],
+                  float(px), float(py), z - 0.5,
+                  float(np.degrees(np.arctan2(gd[1], gd[0]))),
+                  goal, 0.0, 0.0, "ambient")
 
 
 def spawn_actors(wps):
+    global _WALK_READY
     UsdGeom.Xform.Define(stage, "/World/Actors")
+    if WALK_ANIM:                                  # 보행자 걷기 애니 준비
+        _WALK_READY = people_anim.setup_biped(app)
+        print(f"  보행자 걷기 애니: {'ON' if _WALK_READY else 'OFF(fallback)'}")
     {"vru": _spawn_vru, "collision": _spawn_collision, "amr": _spawn_amr,
      "traffic": _spawn_traffic}.get(ACTOR_MODE, _spawn_static)(wps)
     _spawn_ambient(wps)                            # 모든 시나리오에 배경 밀도
+    people_anim.finalize_commands()                # GoTo 명령 파일 확정
     return len(_ACTORS)
 
 
@@ -576,8 +617,14 @@ def compute_ttc(ex, ey, evx, evy):
 
 
 def move_actors():
-    """속도 있는 액터를 DT만큼 전진 (VRU 모션)."""
+    """속도 있는 액터를 DT만큼 전진. 걷기 캐릭터는 command가 구동하므로
+    이동시키지 않고 현재 위치만 동기(ego반응·궤적용)."""
     for a in _ACTORS:
+        if a.get("animated"):                      # omni.anim.people가 구동
+            p = people_anim.character_pos(a["prim"])
+            if p:
+                a["x"], a["y"] = p
+            continue
         if a["vx"] == 0 and a["vy"] == 0:
             continue
         a["x"] += a["vx"] * DT
