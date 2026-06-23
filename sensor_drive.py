@@ -792,6 +792,28 @@ for name in _CAM_LOCAL:
         front_rp = rp
 print("카메라 4대 생성")
 
+# ── 6a2. 시네마틱 체이스캠 (ego 추적 단독 영상 — 데모용, 디버그 패널과 별도) ──
+CINEMATIC = os.environ.get("CINEMATIC", "1") == "1"
+cine_cam = cine_rgb = None
+if CINEMATIC:
+    cine_cam = rep.create.camera(position=(x0 - 10, y0, z0 + 5),
+                                 look_at=(x0 + 8, y0, z0 + 1),
+                                 focal_length=20.0)
+    cine_rp = rep.create.render_product(cine_cam, (1280, 720))
+    cine_rgb = rep.AnnotatorRegistry.get_annotator("rgb")
+    cine_rgb.attach([cine_rp])
+    print("시네마틱 체이스캠 생성 (1280x720)")
+
+
+def cine_pose(ex, ey, ez, yaw_deg):
+    """ego 뒤·위에서 따라가는 체이스 시점."""
+    yr = np.radians(yaw_deg)
+    fx, fy = np.cos(yr), np.sin(yr)
+    pos = (ex - fx * 10, ey - fy * 10, ez + 5)        # 뒤 10m·위 5m
+    look = (ex + fx * 8, ey + fy * 8, ez + 1)         # 전방 주시
+    return pos, look
+
+
 # ── 6b. 자동 라벨 annotator (front 카메라) ────────────────────────────────────
 seg_an = rep.AnnotatorRegistry.get_annotator(
     "semantic_segmentation", init_params={"colorize": True})
@@ -1334,6 +1356,10 @@ for fi in range(NUM_FRAMES):
         cam_world[name] = (pos, look)         # Pose 2D 투영용
         with cameras[name]:
             rep.modify.pose(position=pos, look_at=look)
+    if cine_cam is not None:                  # 시네마틱 체이스캠 추적
+        cpos, clook = cine_pose(x, y, z, yaw)
+        with cine_cam:
+            rep.modify.pose(position=cpos, look_at=clook)
 
     for _ in range(10):
         sim_ctx.step(render=True)
@@ -1440,6 +1466,12 @@ for fi in range(NUM_FRAMES):
         make_composite(cam_imgs, lidar_topdown(pts), us_viz(us_vals),
                        seg_img, depth_img, fi)
     ).save(os.path.join(OUTPUT_DIR, f"frame_{fi:04d}.png"))
+    # 시네마틱 체이스캠 단독 영상 (깨끗한 데모 뷰)
+    if cine_rgb is not None:
+        ci = cine_rgb.get_data()
+        if isinstance(ci, np.ndarray) and ci.size and ci.max() > 0:
+            Image.fromarray(ci[:, :, :3]).save(
+                os.path.join(OUTPUT_DIR, f"frame_view_{fi:04d}.png"))
     log(f"  frame {fi}: 저장 완료")
   except Exception as e:
     log(f"  frame {fi} 예외: {e}\n{traceback.format_exc()}")
