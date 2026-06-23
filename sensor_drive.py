@@ -669,10 +669,8 @@ def move_actors():
     이동시키지 않고 현재 위치만 동기(ego반응·궤적용)."""
     for a in _ACTORS:
         if a.get("animated"):                      # omni.anim.people가 구동
-            p = people_anim.character_pos(a["prim"])
-            if p:
-                a["x"], a["y"] = p
-            continue
+            continue            # 위치는 get_poses가 스켈레톤(실제 걸은 위치)서 동기.
+            #  (character_pos=root xform은 걷기 중 spawn에 고정돼 stale)
         if a["vx"] == 0 and a["vy"] == 0:
             continue
         a["x"] += a["vx"] * DT
@@ -1200,6 +1198,11 @@ def get_poses(cam_world=None):
                 if joints:
                     break
             if joints:
+                # 걷는 보행자 실제 위치를 골반에서 actor GT에 동기(궤적·ego반응용)
+                hip = next((xyz for n, xyz in joints
+                            if n in ("Pelvis", "Hip")), None)
+                if hip is not None and a.get("animated"):
+                    a["x"], a["y"] = float(hip[0]), float(hip[1])
                 rec = {"actor": a["path"], "behavior": a["behavior"],
                        "num_joints": len(joints),
                        "keypoints": [{"name": n, "x": xyz[0], "y": xyz[1],
