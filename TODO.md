@@ -27,7 +27,8 @@
 > 진행 메모(갱신): 기능 전반 구현·검증 완료. **남은 격차**:
 > ① 대량생성 1만 프레임 — 코드는 준비(`run_scenario.py`), 실행만 필요
 > ② 골격 Pose 라벨(UsdSkel), 오토바이 실모델, 보행자 걷기 애니(omni.anim.people)
-> ③ 외부·인프라 의존(코드밖): 실 VDS(ITS API키), 기업 PoC, PostgreSQL, 슈퍼컴 실계정
+> ③ 외부·인프라 의존(코드밖): 실 VDS(ITS API키), 기업 PoC, 슈퍼컴 실계정
+> (DB는 SQLite로 구현 완료 — `web/backend/db.py`, PostgreSQL 전환은 connect()만 교체)
 > 주의: Isaac Sim 동시 2개 실행 금지(GPU 14GB 한계 → ACPI gpe17 폭주 경험).
 
 ---

@@ -87,7 +87,8 @@ python3 pipeline/selfcheck.py
   교체점: `web/backend/traffic.py`.
 - 골격 Pose 라벨 없음(UsdSkel 쿼리 필요), 보행자 걷기 애니 없음(omni.anim.people).
 - 오토바이만 박스 프록시(쓸만한 CC0 실모델 못 찾음). 나머지 이륜차=자전거 실모델.
-- PostgreSQL 대신 zip 직접 스캔(`main.py`). React는 스캐폴드만, 실제는 정적 SPA.
+- 카탈로그 DB는 **SQLite**(`web/backend/db.py`, 의존성0). PostgreSQL 전환은
+  `db.connect()`만 psycopg로 교체(스키마 호환). React는 스캐폴드만, 실제는 정적 SPA.
 - 1만 프레임 미달(현재 140) — `run_scenario.py`로 실행만 하면 됨.
 
 ---
