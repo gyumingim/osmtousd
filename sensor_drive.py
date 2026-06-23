@@ -16,7 +16,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from PIL import Image, ImageDraw
-from pxr import UsdGeom, UsdPhysics, Gf, Sdf, Usd, UsdSkel
+from pxr import UsdGeom, UsdPhysics, Gf, Sdf, Usd, UsdSkel, UsdLux
 
 import omni
 import omni.kit.commands
@@ -84,6 +84,50 @@ WEATHER  = os.environ.get("ENV_WEATHER", "clear")  # clear/cloudy/fog/rain
 apply_lighting(stage, LIGHTING)
 apply_weather(stage, WEATHER)
 print(f"환경: 조명={LIGHTING}, 기상={WEATHER}")
+
+# ── 3a. 도메인 랜덤화 (제안서 1-C) — 프레임마다 조명/노출 변주로 데이터 다양성 ──
+DOMAIN_RAND = os.environ.get("DOMAIN_RAND", "1") == "1"
+_DR_BASE = {}
+
+
+def _capture_dr_base():
+    sun = stage.GetPrimAtPath("/World/SunLight")
+    dome = stage.GetPrimAtPath("/World/DomeLight")
+    if sun.IsValid():
+        _DR_BASE["sun_int"] = float(
+            UsdLux.DistantLight(sun).GetIntensityAttr().Get() or 1000.0)
+        rv = UsdGeom.XformCommonAPI(sun).GetXformVectors(
+            Usd.TimeCode.Default())
+        _DR_BASE["sun_rot"] = (float(rv[2][0]), float(rv[2][1]),
+                               float(rv[2][2]))
+    if dome.IsValid():
+        _DR_BASE["dome_int"] = float(
+            UsdLux.DomeLight(dome).GetIntensityAttr().Get() or 800.0)
+
+
+def domain_randomize(fi):
+    """프레임별 조명(태양 각도·세기, 천공 세기) 무작위화. 결정적(fi 시드)."""
+    if not DOMAIN_RAND or not _DR_BASE:
+        return None
+    rng = np.random.default_rng(fi * 131 + 7)
+    out = {}
+    sun = stage.GetPrimAtPath("/World/SunLight")
+    if sun.IsValid() and "sun_rot" in _DR_BASE:
+        rx, ry, rz = _DR_BASE["sun_rot"]
+        jr = (rx + float(rng.uniform(-12, 12)),
+              ry + float(rng.uniform(-25, 25)), rz)
+        UsdGeom.XformCommonAPI(sun).SetRotate(
+            Gf.Vec3f(*jr), UsdGeom.XformCommonAPI.RotationOrderXYZ)
+        si = _DR_BASE["sun_int"] * float(rng.uniform(0.8, 1.25))
+        UsdLux.DistantLight(sun).GetIntensityAttr().Set(si)
+        out["sun_intensity"] = round(si, 1)
+        out["sun_azimuth_jit"] = round(jr[1], 1)
+    dome = stage.GetPrimAtPath("/World/DomeLight")
+    if dome.IsValid() and "dome_int" in _DR_BASE:
+        di = _DR_BASE["dome_int"] * float(rng.uniform(0.85, 1.2))
+        UsdLux.DomeLight(dome).GetIntensityAttr().Set(di)
+        out["dome_intensity"] = round(di, 1)
+    return out
 
 # ── 3b. 씬 그룹 semantics (세그멘테이션용, 그룹→자식 전파) ────────────────────
 _SCENE_LABELS = {
@@ -1256,9 +1300,11 @@ _HUD = {"spd": 0.0, "act": "", "dist": 0.0, "sig": ""}
 # ── 메인 루프 ─────────────────────────────────────────────────────────────────
 import traceback
 _ego["v"] = SPEED_MPS   # ego 초기 주행속도
+_capture_dr_base()      # 도메인 랜덤화 기준 조명 캡처
 log(f"=== 수집 시작: {NUM_FRAMES}프레임 ===")
 for fi in range(NUM_FRAMES):
   try:
+    dr = domain_randomize(fi)   # 프레임별 조명/노출 변주 (데이터 다양성)
     move_actors()  # VRU 모션 (정적 액터는 무변화)
     sig_state = update_traffic(fi * TDT)  # 신호 위상 + 주행차량 폐루프
     # ego 폐루프 주행: 차로 추종 + 적색신호/전방장애물 반응
@@ -1349,6 +1395,7 @@ for fi in range(NUM_FRAMES):
     meta = {
         "frame": fi,
         "environment": {"lighting": LIGHTING, "weather": WEATHER},
+        "domain_rand": dr,
         "ego": {"x": float(x), "y": float(y), "z": float(z),
                 "yaw_deg": float(yaw)},
         "speed_kph": round(ego_spd * 3.6, 1),
