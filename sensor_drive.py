@@ -10,7 +10,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from PIL import Image, ImageDraw
-from pxr import UsdGeom, UsdPhysics, Gf, Sdf
+from pxr import UsdGeom, UsdPhysics, Gf, Sdf, Usd, UsdSkel
 
 import omni
 import omni.kit.commands
@@ -1001,6 +1001,71 @@ def parse_bbox3d(b3):
     return out
 
 
+# ── 보행자 골격 Pose 라벨 (제안서 ③ VRU "자세(Pose)") ─────────────────────────
+_SKEL_CACHE = UsdSkel.Cache()
+
+
+def _skel_world_joints(skel_q):
+    """SkeletonQuery → [(name, (x,y,z))] 월드좌표. API 변형 방어."""
+    names = list(skel_q.GetJointOrder())
+    xf = None
+    try:
+        xc = UsdGeom.XformCache(Usd.TimeCode.Default())
+        xf = skel_q.ComputeJointWorldTransforms(xc)
+    except Exception:
+        try:                                # skel-space → 루트변환 합성 fallback
+            xf = skel_q.ComputeJointSkelTransforms(Usd.TimeCode.Default())
+        except Exception:
+            return []
+    out = []
+    if xf is None:
+        return out
+    for nm, m in zip(names, xf):
+        t = m.ExtractTranslation()
+        out.append((str(nm).split("/")[-1],
+                    (round(float(t[0]), 3), round(float(t[1]), 3),
+                     round(float(t[2]), 3))))
+    return out
+
+
+def get_poses():
+    """보행자 액터의 골격 관절 월드좌표(키포인트) → 자세 라벨 리스트."""
+    out = []
+    for a in _ACTORS:
+        if a["label"] != "pedestrian":
+            continue
+        try:
+            root_prim = a["prim"].GetPrim()
+            skelroot = None
+            for p in Usd.PrimRange(root_prim, Usd.TraverseInstanceProxies()):
+                if p.IsA(UsdSkel.Root):
+                    skelroot = p
+                    break
+            if skelroot is None:
+                continue
+            _SKEL_CACHE.Populate(UsdSkel.Root(skelroot),
+                                 Usd.TraverseInstanceProxies())
+            joints = []
+            for p in Usd.PrimRange(skelroot, Usd.TraverseInstanceProxies()):
+                if not p.IsA(UsdSkel.Skeleton):
+                    continue
+                q = _SKEL_CACHE.GetSkelQuery(UsdSkel.Skeleton(p))
+                if not q:
+                    continue
+                joints = _skel_world_joints(q)
+                if joints:
+                    break
+            if joints:
+                out.append({"actor": a["path"], "behavior": a["behavior"],
+                            "num_joints": len(joints),
+                            "keypoints": [{"name": n, "x": xyz[0],
+                                           "y": xyz[1], "z": xyz[2]}
+                                          for n, xyz in joints]})
+        except Exception as e:
+            log(f"  pose 추출 실패 {a.get('path')}: {e}")
+    return out
+
+
 # ── 시각화 ────────────────────────────────────────────────────────────────────
 def draw_bboxes(rgb, boxes):
     img  = Image.fromarray(rgb[:, :, :3])
@@ -1178,9 +1243,16 @@ for fi in range(NUM_FRAMES):
     if depth_img is not None:
         Image.fromarray(depth_img).save(
             os.path.join(LABELS_DIR, f"frame_{fi:04d}_depth.png"))
+    # 보행자 골격 Pose 라벨 (있을 때만)
+    poses = get_poses()
+    if poses:
+        with open(os.path.join(LABELS_DIR, f"frame_{fi:04d}_pose.json"),
+                  "w", encoding="utf-8") as pf:
+            json.dump(clean({"frame": fi, "pedestrians": poses}), pf,
+                      ensure_ascii=False)
     log(f"  frame {fi}: lidar={0 if pts is None else len(pts)} "
         f"seg={'O' if seg_img is not None else 'X'} "
-        f"bbox3d={len(boxes3d)}")
+        f"bbox3d={len(boxes3d)} pose={len(poses)}")
 
     # JSON
     meta = {
@@ -1203,6 +1275,7 @@ for fi in range(NUM_FRAMES):
         "proximity_m": {lbl: float(v) for lbl, v in us_vals},
         "radar_detections": len(radar_rows),
         "ultrasonic_detections": sum(1 for r in us_rows if r["detected"]),
+        "pose_count": len(poses),
         "labels": {
             "semantic_seg": f"labels/frame_{fi:04d}_seg.png",
             "instance_seg": f"labels/frame_{fi:04d}_inst.png",
@@ -1210,6 +1283,8 @@ for fi in range(NUM_FRAMES):
             "lidar_pcd": f"labels/frame_{fi:04d}_lidar.pcd",
             "radar_csv": f"labels/frame_{fi:04d}_radar.csv",
             "ultrasonic_csv": f"labels/frame_{fi:04d}_ultrasonic.csv",
+            "pose_json": (f"labels/frame_{fi:04d}_pose.json"
+                          if poses else None),
         },
     }
     meta = clean(meta)
