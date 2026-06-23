@@ -1028,8 +1028,33 @@ def _skel_world_joints(skel_q):
     return out
 
 
-def get_poses():
-    """보행자 액터의 골격 관절 월드좌표(키포인트) → 자세 라벨 리스트."""
+# 카메라 내부행렬 (focal 18mm / aperture 20.955mm / 640x360)
+_POSE_FX = 18.0 / 20.955 * CAM_W
+_POSE_CX, _POSE_CY = CAM_W / 2.0, CAM_H / 2.0
+
+
+def _project(wpt, cam_pos, look):
+    """월드점 → 카메라 픽셀 (u,v,depth) 또는 None(뒤/화면밖)."""
+    rel = np.array(wpt) - np.array(cam_pos)
+    f = np.array(look) - np.array(cam_pos)
+    f = f / (np.linalg.norm(f) + 1e-9)            # 광축(전방)
+    r = np.cross(f, [0.0, 0.0, 1.0])
+    rn = np.linalg.norm(r)
+    if rn < 1e-6:
+        return None
+    r = r / rn                                     # 카메라 우측
+    d = np.cross(f, r)                             # 카메라 하단
+    zc = float(np.dot(rel, f))
+    if zc <= 0.1:                                  # 카메라 뒤
+        return None
+    u = _POSE_CX + _POSE_FX * float(np.dot(rel, r)) / zc
+    v = _POSE_CY + _POSE_FX * float(np.dot(rel, d)) / zc
+    vis = 0 <= u < CAM_W and 0 <= v < CAM_H
+    return round(u, 1), round(v, 1), round(zc, 2), vis
+
+
+def get_poses(cam_world=None):
+    """보행자 골격 관절 → 3D 월드좌표 + (cam_world 주면) 카메라별 2D 픽셀."""
     out = []
     for a in _ACTORS:
         if a["label"] != "pedestrian":
@@ -1056,11 +1081,23 @@ def get_poses():
                 if joints:
                     break
             if joints:
-                out.append({"actor": a["path"], "behavior": a["behavior"],
-                            "num_joints": len(joints),
-                            "keypoints": [{"name": n, "x": xyz[0],
-                                           "y": xyz[1], "z": xyz[2]}
-                                          for n, xyz in joints]})
+                rec = {"actor": a["path"], "behavior": a["behavior"],
+                       "num_joints": len(joints),
+                       "keypoints": [{"name": n, "x": xyz[0], "y": xyz[1],
+                                      "z": xyz[2]} for n, xyz in joints]}
+                if cam_world:                      # 카메라별 2D 픽셀 투영
+                    kp2d = {}
+                    for cam, (cpos, look) in cam_world.items():
+                        pj = []
+                        for n, xyz in joints:
+                            p = _project(xyz, cpos, look)
+                            if p and p[3]:         # 화면 안만
+                                pj.append({"name": n, "u": p[0], "v": p[1]})
+                        if pj:
+                            kp2d[cam] = pj
+                    if kp2d:
+                        rec["keypoints_2d"] = kp2d
+                out.append(rec)
         except Exception as e:
             log(f"  pose 추출 실패 {a.get('path')}: {e}")
     return out
@@ -1193,8 +1230,10 @@ for fi in range(NUM_FRAMES):
             f"@ {_collision['impact_kph']}km/h")
     log(f"  frame {fi}: ego v={ego_spd:.1f}m/s ({ego_reason})")
 
+    cam_world = {}
     for name in _CAM_LOCAL:
         pos, look = cam_pose(name, x, y, z, yaw)
+        cam_world[name] = (pos, look)         # Pose 2D 투영용
         with cameras[name]:
             rep.modify.pose(position=pos, look_at=look)
 
@@ -1243,8 +1282,8 @@ for fi in range(NUM_FRAMES):
     if depth_img is not None:
         Image.fromarray(depth_img).save(
             os.path.join(LABELS_DIR, f"frame_{fi:04d}_depth.png"))
-    # 보행자 골격 Pose 라벨 (있을 때만)
-    poses = get_poses()
+    # 보행자 골격 Pose 라벨 (3D 월드 + 카메라별 2D 픽셀, 있을 때만)
+    poses = get_poses(cam_world)
     if poses:
         with open(os.path.join(LABELS_DIR, f"frame_{fi:04d}_pose.json"),
                   "w", encoding="utf-8") as pf:
