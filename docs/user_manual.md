@@ -25,7 +25,8 @@ labels/  frame_NNNN.json|yaml    프레임 라벨(아래 3절)
          trajectories.json       객체·ego 궤적 트랙
          frame_NNNN_pose.json    (보행자 있을 때) 골격 관절 키포인트(자세)
          v2x_log.json            (V2X) 링크별 통신 로그
-meta/    metadata.json           스펙·통계
+cinematic/ frame_view_NNNN.png   ego 추적 체이스캠 단독 영상(1280x720, 데모용)
+meta/    metadata.json           스펙·통계(+domain_rand: 프레임별 조명 변주)
          calibration.json        센서 내·외부 파라미터
 README.md
 ```

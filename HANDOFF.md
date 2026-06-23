@@ -85,12 +85,22 @@ python3 pipeline/selfcheck.py
 **시뮬/placeholder(코드밖 의존)**:
 - 교통량·혼잡도·VDS = **시뮬**(실 ITS/VDS API키 필요). 노드/도로/신호등 **위치는 V-World 실데이터**.
   교체점: `web/backend/traffic.py`.
-- 골격 Pose 라벨 **있음**(UsdSkel 101관절 키포인트, `get_poses`). 단 걷기 애니
-  없어 정지자세(omni.anim.people 붙이면 동적). 2D 이미지 투영은 추후.
-- 오토바이만 박스 프록시(쓸만한 CC0 실모델 못 찾음). 나머지 이륜차=자전거 실모델.
+- 골격 Pose 라벨 **완료**(UsdSkel 101관절 3D 월드 + 카메라별 2D 픽셀 투영,
+  `get_poses`). 보행자 frame당 `labels/frame_NNNN_pose.json`.
+- 보행자 **걷기 애니 작동**(omni.anim.people, 기본 ON). Pose Hip이 10프레임
+  1.8m 전진·다리 stride 확인. ⚠️ **주의**: actor GT 위치 동기 버그를 4a328b4에서
+  수정(get_poses가 골반좌표로 동기) — 이 수정 이후 렌더는 정확, **그 전 생성된
+  현재 14셋은 걷기 보행자 actor x,y가 stale**(단 bbox·seg·Pose는 정확). 재부팅 후
+  재생성하면 해소.
+- **도메인 랜덤화** 추가(프레임별 조명, meta `domain_rand`) + **시네마틱 체이스캠**
+  (`cinematic/frame_view_NNNN.png`, 포털 🎬토글).
+- 오토바이만 박스 프록시(**최종**: CC-BY 후보 ~10개 렌더했으나 off-origin/저품질).
+  나머지 이륜차=자전거 실모델.
 - 카탈로그 DB는 **SQLite**(`web/backend/db.py`, 의존성0). PostgreSQL 전환은
   `db.connect()`만 psycopg로 교체(스키마 호환). React는 스캐폴드만, 실제는 정적 SPA.
 - 1만 프레임 미달(현재 140) — `run_scenario.py`로 실행만 하면 됨.
+- ⚠️ **GPU CUDA wedge 주의**: 연속 다수 렌더 시 CUDA 999로 먹통(cuInit 999,
+  메모리는 빔). nvidia-smi 멀쩡해도 렌더 불가 → **재부팅만이 복구**.
 
 ---
 
@@ -98,13 +108,15 @@ python3 pipeline/selfcheck.py
 
 | 작업 | 방법 | 난이도 |
 |---|---|---|
+| 재부팅 후 재생성 | GPU 복구 + 걷기 GT동기 수정(4a328b4) 반영해 14셋 재생성 | 실행만 |
 | 1만 프레임 생성 | `run_scenario.py --grid full --frames 700` (시간·머신주의) | 실행만 |
-| 보행자 걷기 애니 | omni.anim.people 연동(헤드리스 까다로움) → 동적 자세 | 중상 |
-| 오토바이 실모델 | Poly Pizza 후보 더 받아 변환(`convert_vehicles.py`)·직립 검증 | 중 |
-| 보행자 걷기 | omni.anim.people 연동(헤드리스 까다로움) | 중상 |
 | PostgreSQL | `main.py` zip스캔 → SQLAlchemy(SQLite로 시작 가능) | 중 |
 | 실 VDS | `traffic.py`에 ITS OpenAPI 어댑터(API키 필요) | 외부의존 |
 | 기업 PoC | 외부 사업활동(코드밖) | 외부 |
+| 베이스맵 실지오메트리 | V-World 3D건물 확보 후 박스 extrude 교체(파이프라인 재작성) | 대 |
+
+> 걷기 애니·골격 Pose(3D+2D)·도메인랜덤화·시네마틱·DB·실차량은 **완료**.
+> 오토바이 실모델은 **보류 확정**(쓸만한 CC-BY 모델 없음 → 박스 프록시 유지).
 
 ---
 
@@ -127,5 +139,7 @@ ZIP: `data/`(합성PNG) `labels/`(JSON·세그·깊이·pcd·csv·궤적) `meta/
 
 ## 8. 현재 상태 한 줄
 
-기능 ~90% 완성·검증, 14 데이터셋 생성·패키징·웹반영 완료. 미달은 ①대량생성(실행만)
-②오토바이실모델·걷기애니 ③외부의존(실VDS·PoC). DB·골격Pose는 완료.
+기능 거의 완성·검증, 14 데이터셋 생성·패키징·웹반영 완료. 걷기애니·골격Pose(3D+2D)·
+도메인랜덤화·시네마틱·DB·실차량·지도(시뮬지점 마커 상호작용)까지 완료. 미달은
+①대량생성(1만, 실행만) ②외부의존(실VDS·PoC·PostgreSQL) ③베이스맵 실지오메트리(대형).
+오토바이=프록시 확정. 현재 14셋은 걷기 GT위치 stale(4a328b4 수정 후 재생성 시 해소).

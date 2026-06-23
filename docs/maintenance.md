@@ -62,30 +62,25 @@ cd ~/isaacsim && ENV_WEATHER=fog ACTOR_MODE=vru NUM_FRAMES=10 OUTPUT_SUBDIR=t \
 - 골격 Pose: ✅ 구현됨(`get_poses`, UsdSkel 101관절 + 2D 투영)
 - DB 백엔드: ✅ 구현됨(`web/backend/db.py` SQLite, PG는 connect()만 교체)
 
-## 보행자 걷기 애니 (omni.anim.people) — 구현됨(기본 OFF), 검증 메모
+## 보행자 걷기 애니 (omni.anim.people) — 구현·작동 확인 (기본 ON)
 
-**구현 완료**(`people_anim.py` + sensor_drive `WALK_ANIM` 게이트, 기본 OFF).
-standalone walk_test로 걷기 코어 검증됨(캐릭터 GoTo→다리 articulate 0.16m).
-**파이프라인내 검증은 GPU CUDA wedge로 미완** → 재부팅 후 `WALK_ANIM=1`로
-VRU 1렌더 확인 → 정상이면 기본 ON 전환. 흐름(검증된 공식 경로):
+**작동 확인됨**(`people_anim.py` + sensor_drive `WALK_ANIM` 게이트, 기본 ON).
+데이터 무결성 검증: Pose Hip이 10프레임 1.8m 전진·다리 비대칭 stride → 실제 보행.
+경로(검증된 공식):
 - `isaacsim.replicator.agent.core`의 `CharacterUtil`:
   load_default_biped_to_stage → load_character_usd_to_stage →
   setup_animation_graph_to_character → setup_python_scripts_to_character
 - command 파일(`<name> GoTo x y 0 _`) +
   `/exts/omni.anim.people/command_settings/command_file_path` 설정
-- navmesh_enabled=False(직선보행), 타임라인 play 시 behavior가 구동
-- 걷기캐릭터는 `_ACTORS`에 `animated:True`, move_actors는 위치만 동기
+- navmesh_enabled=False(직선보행), sim_ctx.step이 behavior on_update 구동
+- ⚠️ **확장은 Replicator import 前에 enable 필수**(SimulationApp 직후, 안 하면
+  OmniGraph 스케줄러 충돌). sensor_drive 상단 `people_anim.enable_extensions()`.
 
-### (옛 연구 메모)
+### ⚠️ 걷기 보행자 GT 위치 동기 (버그·수정 이력)
 
-omni.anim.people-0.7.9 확장은 **enable OK**. 단 캐릭터에 baked 걷기 클립은 없고
-(런타임 애니그래프 방식), 통합은 다음을 요구하는 큰 작업:
-- 각 보행자에 **AnimationGraph 리타게팅**(Biped_Setup 릭 → 캐릭터 스켈레톤).
-  `CharacterBehavior.init_character()`가 `ag.get_character(prim)` 반환을 요구 →
-  캐릭터가 애니그래프 등록돼야 함.
-- 캐릭터에 `CharacterBehavior`(omni.kit.scripting BehaviorScript) 적용 +
-  command 파일(`GoTo x y z dur` 등). 확장: `.../extscache/omni.anim.people-0.7.9*/`
-- navmesh/queue/custom-command 매니저(확장 init 시 생성).
-- on_play→on_update 루프에서 구동 → sim_ctx.step이 app.update 하므로 동작 가능.
-→ 헤드리스 standalone에서 리타게팅 셋업이 까다로움. 전용 작업 권장.
-대안: 현재는 보행자 위치 이동(슬라이드) + 골격 Pose 라벨로 관절좌표는 정확.
+`CharacterUtil.get_character_pos`(=캐릭터 root xform)는 걷는 동안 spawn에 고정돼
+**stale** → actor GT·궤적·ego반응이 잘못된 위치 사용(단 bbox·seg·Pose는 정상).
+**수정(4a328b4)**: `get_poses`가 스켈레톤 Pelvis/Hip 월드좌표로 `a[x],a[y]` 동기,
+`move_actors`는 animated 보행자 위치 갱신 안 함(get_poses 소유). get_poses는 actors
+JSON 빌드 前에 실행되므로 당 프레임 라벨 정확. **이 수정 前 생성된 14셋은 stale** →
+재부팅·재생성 시 해소.
