@@ -146,7 +146,11 @@ function stopPlay(){
 function closeModal(){ stopPlay(); document.getElementById("modal").classList.add("hidden"); }
 
 document.getElementById("filter").addEventListener("change", loadDatasets);
-loadStats(); loadDatasets();
+loadStats();
+loadDatasets().then(() => {            // 지도 마커에서 ?open=<id>로 진입 시 자동 열기
+  const id = new URLSearchParams(location.search).get("open");
+  if (id) openModal(id);
+});
 </script>
 </body>
 </html>
