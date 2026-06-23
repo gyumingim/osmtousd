@@ -84,9 +84,13 @@ def package_combo(combo_dir):
     zip_path = os.path.join(PKG_DIR, f"{scenario}_{combo}.zip")
 
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
-        # data/ ← 합성 프레임 PNG
+        # data/ ← 합성 프레임 PNG, cinematic/ ← 체이스캠 영상
         for png in sorted(glob.glob(os.path.join(combo_dir, "frame_*.png"))):
-            z.write(png, f"data/{os.path.basename(png)}")
+            bn = os.path.basename(png)
+            if bn.startswith("frame_view_"):
+                z.write(png, f"cinematic/{bn}")
+            else:
+                z.write(png, f"data/{bn}")
         # labels/ ← 프레임 JSON/YAML + 세그/깊이/인스턴스/pcd/csv
         for jp in sorted(glob.glob(os.path.join(combo_dir, "frame_*.json"))):
             z.write(jp, f"labels/{os.path.basename(jp)}")

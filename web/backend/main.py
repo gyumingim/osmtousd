@@ -70,14 +70,20 @@ def download(ds_id: str):
 
 
 @app.get("/api/datasets/{ds_id}/preview")
-def preview(ds_id: str, frame: int = 0):
-    """데이터셋 첫 프레임 합성 PNG 미리보기."""
+def preview(ds_id: str, frame: int = 0, view: str = "analysis"):
+    """프레임 미리보기. view=analysis(4분할 합성) / cinematic(체이스캠 영상)."""
     if ds_id not in CATALOG:
         raise HTTPException(404, "데이터셋 없음")
     with zipfile.ZipFile(CATALOG[ds_id]["path"]) as z:
-        name = f"data/frame_{frame:04d}.png"
-        if name not in z.namelist():
-            raise HTTPException(404, "프레임 없음")
+        if view == "cinematic":
+            name = f"cinematic/frame_view_{frame:04d}.png"
+        else:
+            name = f"data/frame_{frame:04d}.png"
+        names = z.namelist()
+        if name not in names:                 # 시네마틱 없으면 합성으로 폴백
+            name = f"data/frame_{frame:04d}.png"
+            if name not in names:
+                raise HTTPException(404, "프레임 없음")
         from fastapi.responses import Response
         return Response(z.read(name), media_type="image/png")
 
