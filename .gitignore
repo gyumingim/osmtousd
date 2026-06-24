@@ -1,25 +1,19 @@
-# Generated output
-*.usda
-*.usdz
-*.usdz
-
-# Caches (re-downloadable)
-*.pkl
-
-# Generated textures (re-generatable)
-textures/
-
-# Sensor 수집 결과물 (재생성 가능)
-output/
-packages/
-logs/
+# 루트 — 새 Isaac Sim 프로젝트용. kmit/ 은 자체 .gitignore 보유.
 
 # Python
 __pycache__/
 *.pyc
 *.pyo
 
-# Env
+# Env / 자격증명
 .env
-assets/vehicles/glb/
-catalog.db
+*.key
+
+# Isaac/USD 생성물 (재생성 가능) — 새 프로젝트에서 쓰면 주석 해제
+# *.usda
+# *.usdz
+# output/
+# packages/
+
+# 캐시
+*.pkl

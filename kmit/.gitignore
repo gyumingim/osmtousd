@@ -1,0 +1,28 @@
+# Generated output
+*.usda
+*.usdz
+*.usdz
+
+# Caches (re-downloadable)
+*.pkl
+
+# Generated textures (re-generatable)
+textures/
+
+# Sensor 수집 결과물 (재생성 가능)
+output/
+packages/
+logs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Env
+.env
+assets/vehicles/glb/
+catalog.db
+
+# 제안서 PDF (원래 untracked 유지)
+pdf/
