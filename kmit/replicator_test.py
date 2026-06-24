@@ -11,8 +11,8 @@ from pxr import UsdGeom, Sdf, Gf, Vt
 import omni.usd
 import omni.replicator.core as rep
 
-STAGE_PATH = "/home/karma/OSMtoUSD/gumi.usda"
-OUTPUT_DIR = "/home/karma/OSMtoUSD/output"
+STAGE_PATH = "/home/karma/OSMtoUSD/kmit/gumi.usda"
+OUTPUT_DIR = "/home/karma/OSMtoUSD/kmit/output"
 NUM_VEHICLES = 8
 RENDER_FRAMES = 1
 

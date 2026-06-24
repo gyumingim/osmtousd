@@ -15,7 +15,7 @@ import subprocess
 import sys
 
 ISAAC_PY = "/home/karma/isaacsim/_build/linux-x86_64/release/python.sh"
-SENSOR_DRIVE = "/home/karma/OSMtoUSD/sensor_drive.py"
+SENSOR_DRIVE = "/home/karma/OSMtoUSD/kmit/sensor_drive.py"
 ISAAC_CWD = "/home/karma/isaacsim"
 SCENARIO = "scenario_02"
 

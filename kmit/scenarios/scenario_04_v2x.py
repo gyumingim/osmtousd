@@ -17,7 +17,7 @@ import subprocess
 import sys
 
 ISAAC_PY = "/home/karma/isaacsim/_build/linux-x86_64/release/python.sh"
-SENSOR_DRIVE = "/home/karma/OSMtoUSD/sensor_drive.py"
+SENSOR_DRIVE = "/home/karma/OSMtoUSD/kmit/sensor_drive.py"
 ISAAC_CWD = "/home/karma/isaacsim"
 SUBDIR = "scenario_04/run"
 NUM_FRAMES = os.environ.get("NUM_FRAMES", "14")
@@ -30,7 +30,7 @@ def main():
                OUTPUT_SUBDIR=SUBDIR, NUM_FRAMES=NUM_FRAMES)
     rc = subprocess.run([ISAAC_PY, SENSOR_DRIVE], env=env,
                         cwd=ISAAC_CWD).returncode
-    log = os.path.join("/home/karma/OSMtoUSD/output", SUBDIR, "v2x_log.json")
+    log = os.path.join("/home/karma/OSMtoUSD/kmit/output", SUBDIR, "v2x_log.json")
     if os.path.exists(log):
         d = json.load(open(log))
         msgs = d["messages"]

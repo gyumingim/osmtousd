@@ -23,7 +23,7 @@ for d in DIRS:
     except Exception as e:
         out["dirs"][d] = f"ERR: {e}"
 
-with open("/home/karma/OSMtoUSD/output/asset_list.json", "w",
+with open("/home/karma/OSMtoUSD/kmit/output/asset_list.json", "w",
           encoding="utf-8") as f:
     json.dump(out, f, indent=2, ensure_ascii=False)
 print("[PROBE] root:", root)

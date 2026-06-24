@@ -15,7 +15,7 @@ import glob
 import json
 import zipfile
 
-PKG = sys.argv[1] if len(sys.argv) > 1 else "/home/karma/OSMtoUSD/packages"
+PKG = sys.argv[1] if len(sys.argv) > 1 else "/home/karma/OSMtoUSD/kmit/packages"
 REQ_META = {"scenario", "scenario_name", "frame_count", "source"}
 
 

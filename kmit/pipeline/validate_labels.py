@@ -19,7 +19,7 @@ import glob
 import json
 from collections import Counter
 
-BASE = sys.argv[1] if len(sys.argv) > 1 else "/home/karma/OSMtoUSD/output"
+BASE = sys.argv[1] if len(sys.argv) > 1 else "/home/karma/OSMtoUSD/kmit/output"
 CAM_W, CAM_H = 640, 360
 KNOWN = {"building", "road", "road_marking", "crosswalk", "sidewalk",
          "traffic_sign", "traffic_light", "car", "truck", "bus",

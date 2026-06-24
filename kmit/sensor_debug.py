@@ -3,7 +3,7 @@
 결과: output/debug_report.json (구조화된 진단)
 
 Usage:
-    ./_build/linux-x86_64/release/python.sh /home/karma/OSMtoUSD/sensor_debug.py
+    ./_build/linux-x86_64/release/python.sh /home/karma/OSMtoUSD/kmit/sensor_debug.py
 """
 from isaacsim import SimulationApp
 app = SimulationApp({"headless": True, "enable_motion_bvh": True})
@@ -22,8 +22,8 @@ from isaacsim.core.api import SimulationContext
 from isaacsim.sensors.rtx import LidarRtx, get_gmo_data
 from omni.physx import get_physx_scene_query_interface
 
-STAGE_PATH = "/home/karma/OSMtoUSD/gumi.usda"
-OUTPUT_DIR = "/home/karma/OSMtoUSD/output"
+STAGE_PATH = "/home/karma/OSMtoUSD/kmit/gumi.usda"
+OUTPUT_DIR = "/home/karma/OSMtoUSD/kmit/output"
 LIDAR_CONFIG = "Example_Rotary"
 NUM_FRAMES = 3
 

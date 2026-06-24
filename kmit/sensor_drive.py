@@ -30,9 +30,9 @@ from omni.physx import get_physx_scene_query_interface
 from environment import apply_lighting, apply_weather
 import people_anim
 
-STAGE_PATH = "/home/karma/OSMtoUSD/gumi.usda"
+STAGE_PATH = "/home/karma/OSMtoUSD/kmit/gumi.usda"
 # OUTPUT_SUBDIR 환경변수로 시나리오별 폴더 분리 (예: scenario_01/day_rain)
-_BASE_OUT = "/home/karma/OSMtoUSD/output"
+_BASE_OUT = "/home/karma/OSMtoUSD/kmit/output"
 OUTPUT_DIR = os.path.join(_BASE_OUT, os.environ.get("OUTPUT_SUBDIR", ""))
 SPEED_KPH  = float(os.environ.get("SPEED_KPH", "100"))  # AMR 등 저속 변주
 SPEED_MPS  = SPEED_KPH / 3.6
@@ -308,7 +308,7 @@ def _make_ped(path, usd, x, y, z, yaw, goal_xy, vx=0.0, vy=0.0,
 # ── 차량/이륜차 ──────────────────────────────────────────────────────────────
 # 실제 CC0 모델: 승용차·트럭=Kenney Car Kit(Y-up→Rx90 보정), 버스=Poly Pizza(Z-up).
 #   소스마다 축/스케일이 달라 종류별 cfg(files·scale·rx·rz). rx/rz는 이동 시 유지.
-_VEH_USD = "/home/karma/OSMtoUSD/assets/vehicles/usd/"
+_VEH_USD = "/home/karma/OSMtoUSD/kmit/assets/vehicles/usd/"
 _VEH_CFG = {
     "car":   {"files": ["sedan", "suv", "hatchback-sports", "taxi", "police",
                         "van", "suv-luxury", "sedan-sports"],

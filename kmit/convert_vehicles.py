@@ -11,8 +11,8 @@ import os
 import glob
 import asyncio
 
-SRC = "/home/karma/OSMtoUSD/assets/vehicles/glb"
-DST = "/home/karma/OSMtoUSD/assets/vehicles/usd"
+SRC = "/home/karma/OSMtoUSD/kmit/assets/vehicles/glb"
+DST = "/home/karma/OSMtoUSD/kmit/assets/vehicles/usd"
 os.makedirs(DST, exist_ok=True)
 
 

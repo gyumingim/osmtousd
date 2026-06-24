@@ -17,7 +17,7 @@ import json
 from collections import Counter
 from PIL import Image
 
-BASE = sys.argv[1] if len(sys.argv) > 1 else "/home/karma/OSMtoUSD/output"
+BASE = sys.argv[1] if len(sys.argv) > 1 else "/home/karma/OSMtoUSD/kmit/output"
 REQUIRED_KEYS = {"frame", "ego", "bbox2d", "lidar_pts"}
 
 

@@ -17,9 +17,9 @@ import json
 import subprocess
 
 ISAAC_PY = "/home/karma/isaacsim/_build/linux-x86_64/release/python.sh"
-SENSOR_DRIVE = "/home/karma/OSMtoUSD/sensor_drive.py"
+SENSOR_DRIVE = "/home/karma/OSMtoUSD/kmit/sensor_drive.py"
 ISAAC_CWD = "/home/karma/isaacsim"
-BASE = "/home/karma/OSMtoUSD/output"
+BASE = "/home/karma/OSMtoUSD/kmit/output"
 SCENARIO = "scenario_05"
 
 # 사고 vs 회피 — (속도, ego반응). 무반응 돌진=실제 충돌, 제동=회피

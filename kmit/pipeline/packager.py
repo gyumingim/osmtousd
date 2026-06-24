@@ -16,8 +16,8 @@ import json
 import zipfile
 from collections import Counter
 
-BASE = sys.argv[1] if len(sys.argv) > 1 else "/home/karma/OSMtoUSD/output"
-PKG_DIR = sys.argv[2] if len(sys.argv) > 2 else "/home/karma/OSMtoUSD/packages"
+BASE = sys.argv[1] if len(sys.argv) > 1 else "/home/karma/OSMtoUSD/kmit/output"
+PKG_DIR = sys.argv[2] if len(sys.argv) > 2 else "/home/karma/OSMtoUSD/kmit/packages"
 
 SCENARIO_NAMES = {
     "scenario_01": "극한 기상 자율주행",

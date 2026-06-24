@@ -16,7 +16,7 @@ import glob
 import json
 import math
 
-BASE = "/home/karma/OSMtoUSD/output"
+BASE = "/home/karma/OSMtoUSD/kmit/output"
 if len(sys.argv) > 1 and not sys.argv[1].startswith("--"):
     BASE = sys.argv[1]
 DT = 1.0 / 10
