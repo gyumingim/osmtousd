@@ -27,9 +27,9 @@ def load_gt(img):
     if os.path.exists(lf):
         for l in open(lf):
             p = l.split()
-            if len(p) >= 5 and int(p[0]) in drone_idx:
-                cx, cy, bw, bh = map(float, p[1:5])
-                b.append([cx-bw/2, cy-bh/2, cx+bw/2, cy+bh/2])
+            if len(p) >= 5 and int(float(p[0])) in drone_idx:
+                xs = [float(v) for v in p[1::2]]; ys = [float(v) for v in p[2::2]]  # polygon→bbox
+                b.append([min(xs), min(ys), max(xs), max(ys)])
     return np.array(b, dtype=np.float32).reshape(-1, 4)
 
 def iou1(a, B):
