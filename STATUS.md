@@ -51,6 +51,8 @@
 - **순수 합성학습 모델(yolo11s-pose, synth val 0.625) → 실벤치 test AP50 = 0.0** (심각한 sim-to-real 갭). 모델이 새·비행기(confuser)에 헛박스 + 실드론 미탐. (bench_diag.png)
 - 시사점: **합성 단독으론 이 실벤치 전이 실패 → 실데이터 fine-tune이 핵심 레버.** 합성의 가치 = pretrain으로 real-only 대비 향상되는지로 검증.
 - 자율루프 방향: ①실벤치 train(6879)로 탐지기 학습=작동 recognizer ②합성 pretrain/믹스가 도움되는지 A/B ③반복.
+- **Cycle1 (real-full 6879, yolo11s)**: real **test mAP50=0.944**(drone 0.944, airplane 0.935, bird 0.942), mAP50-95 0.643. = "실데이터 풍족시 천장"(비교 기준). 곡선 results/cycle1_*.
+- **Cycle2 (scarce-real A/B, 단일클래스 drone)**: A=실200 vs B=실200+합성359 → 합성이 scarce real 보강하나(=과제 핵심 검증). data cycle2_data/, prep `cycle2_prep.py`.
 
 ## 할 일 (다음)
 - 1만+ 프레임 스케일업(평가목표) · 3기종 테일시터(니나노 CAD/V-BAT)
