@@ -5,15 +5,33 @@ __pycache__/
 *.pyc
 *.pyo
 
-# Env / 자격증명
+# Env / 자격증명 (절대 커밋 금지)
 .env
 *.key
+*.secret
+.secrets
 
-# Isaac/USD 생성물 (재생성 가능) — 새 프로젝트에서 쓰면 주석 해제
+# 대용량 — 데이터셋·가중치·체크포인트·아카이브 (재생성/다운 가능, 커밋 금지)
+poc_city_render/dataset_v1/
+poc_city_render/dataset_pose/
+poc_city_render/dataset_quad/
+poc_city_render/realtest/
+poc_city_render/confusers/
+poc_city_render/runs/
+poc_city_render/benchmarks/
+*.pt
+*.pth
+*.onnx
+*.engine
+*.tar.gz
+*.zip
+*.hdr
+poc_city_render/*.png
+poc_city_render/*.log
+
+# Isaac/USD 생성물 (재생성 가능)
 # *.usda
 # *.usdz
-# output/
-# packages/
 
 # 캐시
 *.pkl
