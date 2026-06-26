@@ -34,15 +34,17 @@ def build_real(imgs, sub):
             open(f"{OUT}/{sub}/labels/"+bn.rsplit(".", 1)[0]+".txt", "w").write(
                 "\n".join(f"0 {a:.6f} {b:.6f} {c:.6f} {d:.6f}" for a, b, c, d in bx))
 
+RUNS = "/home/karma/OSMtoUSD/poc_city_render/runs"
+
 def best(run):
-    r = list(csv.DictReader(open(f"runs/{run}/results.csv")))
+    r = list(csv.DictReader(open(f"{RUNS}/{run}/results.csv")))
     return max(float(x["metrics/mAP50(B)"]) for x in r)
 
 def train(name, yaml):
-    shutil.rmtree(f"runs/{name}", ignore_errors=True)
+    shutil.rmtree(f"{RUNS}/{name}", ignore_errors=True)
     subprocess.run([YOLO, "detect", "train", "model=yolo11s.pt", f"data={yaml}",
                     "imgsz=640", "batch=16", "epochs=100", "patience=25", "cache=False",
-                    "workers=6", "device=0", "project=runs", f"name={name}", "exist_ok=True"],
+                    "workers=6", "device=0", f"project={RUNS}", f"name={name}", "exist_ok=True"],
                    stdout=open(f"sweep_{name}.log", "w"), stderr=subprocess.STDOUT)
     return best(name)
 
