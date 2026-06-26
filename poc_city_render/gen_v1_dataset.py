@@ -54,16 +54,19 @@ gd = ((mx[g1]-mn[g1])**2+(mx[g2]-mn[g2])**2)**0.5
 # 배경/조명(#3): puresky HDRI가 배경+조명 모두 담당(별도 DistantLight 제거 → 이중태양 불일치 해소).
 # 표준 IBL: 돔 회전으로 태양 방위 변주, 강도만 랜덤. 지면없는 HDRI라 도시와 안 충돌.
 HDRIS = sorted(f for f in os.listdir(HDRI_DIR) if f.endswith(".hdr"))
-# 진단: 벤치=쨍한 파란 주광. 맑은 하늘 HDRI 75% 우선, 노을/새벽은 소수(다양성용).
-_clear = [h for h in HDRIS if not any(k in h for k in ("sunset", "dawn", "dusk", "evening"))]
-if _clear and random.random() < 0.75:
-    hdri_name = _clear[(RUN*5 + 3) % len(_clear)]
+# 진단: 벤치=쨍한 파란 주광. 파란 HDRI(kloofendal clear/partly)만 70%, 나머지 다양성 30%.
+_blue = [h for h in HDRIS if any(k in h for k in ("43d_clear", "38d_partl", "48d_partl"))]
+_other = [h for h in HDRIS if not any(k in h for k in ("sunset", "dawn", "dusk", "evening", "overcast"))]
+if _blue and random.random() < 0.7:
+    hdri_name = _blue[(RUN*3 + 1) % len(_blue)]
+elif _other:
+    hdri_name = _other[(RUN*5 + 3) % len(_other)]
 else:
     hdri_name = HDRIS[(RUN*5 + 3) % len(HDRIS)]
 HDRI = os.path.join(HDRI_DIR, hdri_name)
 warm = any(k in hdri_name for k in ("sunset", "dawn", "dusk", "evening"))
 dome = UsdLux.DomeLight.Define(stage, "/PoC_Sky")
-dome.CreateIntensityAttr(random.uniform(900, 1600)); dome.CreateTextureFileAttr(HDRI)
+dome.CreateIntensityAttr(random.uniform(400, 750)); dome.CreateTextureFileAttr(HDRI)  # 과노출 방지(쨍한 파란하늘)
 UsdGeom.Xformable(dome.GetPrim()).AddRotateYOp().Set(random.uniform(0, 360))
 
 # 드론 참조 + 중심정렬/스케일
@@ -89,7 +92,7 @@ ep = [0, 0, 0]; Rr = gd*0.85
 ep[g1] = c1+Rr*math.cos(ang); ep[g2] = c2+Rr*math.sin(ang); ep[ui] = max(ground, 0)+top*random.uniform(0.15, 0.35)
 eye = Gf.Vec3d(*ep)
 # sky: 훨씬 위로 봐서 프레임 대부분 깨끗한 하늘(벤치 매칭, 도시 화면밖). building: 도시+지평선 일부 유지.
-Lp = [0, 0, 0]; Lp[g1] = c1; Lp[g2] = c2; Lp[ui] = top*(random.uniform(1.0, 1.5) if bg == "building" else random.uniform(2.8, 5.0))
+Lp = [0, 0, 0]; Lp[g1] = c1; Lp[g2] = c2; Lp[ui] = top*(random.uniform(1.0, 1.5) if bg == "building" else random.uniform(1.7, 2.8))
 cam = rep.create.camera(position=tuple(eye), look_at=tuple(Lp), focal_length=focal_of(hfov), horizontal_aperture=HAP, clipping_range=(0.05, 1e8))
 rp = rep.create.render_product(cam, (W, H))
 rgb_a = rep.AnnotatorRegistry.get_annotator("rgb")
@@ -198,7 +201,7 @@ def sensor_params():
     return {"ca_scale": random.uniform(1.0, 1.012),                 # 색수차 longitudinal(green scale)
             "ca_shift": random.randint(0, 2),                       # 색수차 lateral(R/B 픽셀이동)
             "blur_sig": (random.uniform(0.4, 1.2) if random.random() < 0.4 else 0.0),  # 디포커스 블러
-            "gamma": random.uniform(0.8, 1.2),                      # 노출(RandomGamma 80~120)
+            "gamma": random.uniform(0.95, 1.15),                    # 노출(과노출 방지로 하한↑)
             "rgb_shift": (random.randint(2, 22) if w else random.randint(-18, 18),     # 색이동(RGBShift±20), 노을=R+/B-
                           random.randint(-12, 12),
                           random.randint(-22, -2) if w else random.randint(-18, 18)),
@@ -306,7 +309,7 @@ for sq in range(N_SEQ):
             rgb, nb = motion_blur(rgb, sd, dids, cxy[0]-prevc[0], cxy[1]-prevc[1])
             if nb: bx = nb
         prevc = cxy
-        rgb = sensor_fx(rgb, sp, random.uniform(2.0, 11.0))   # #2 센서/촬영 효과(라벨 영향 없음)
+        rgb = sensor_fx(rgb, sp, random.uniform(1.0, 5.0))    # #2 센서효과(노이즈 줄임 — 벤치는 깔끔)
         Image.fromarray(rgb).save(os.path.join(DS, "images", fid+".png"))
         vel3 = [0.0, 0.0, 0.0] if prev is None else [d3[i]-prev[i] for i in range(3)]; prev = d3
         dist_m = round((D/gd)*100.0, 1)   # 합성 거리 매핑: D=gd*0.13→13m … gd*5→500m
