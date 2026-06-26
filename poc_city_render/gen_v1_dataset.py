@@ -54,7 +54,12 @@ gd = ((mx[g1]-mn[g1])**2+(mx[g2]-mn[g2])**2)**0.5
 # 배경/조명(#3): puresky HDRI가 배경+조명 모두 담당(별도 DistantLight 제거 → 이중태양 불일치 해소).
 # 표준 IBL: 돔 회전으로 태양 방위 변주, 강도만 랜덤. 지면없는 HDRI라 도시와 안 충돌.
 HDRIS = sorted(f for f in os.listdir(HDRI_DIR) if f.endswith(".hdr"))
-hdri_name = HDRIS[(RUN*5 + 3) % len(HDRIS)]
+# 진단: 벤치=쨍한 파란 주광. 맑은 하늘 HDRI 75% 우선, 노을/새벽은 소수(다양성용).
+_clear = [h for h in HDRIS if not any(k in h for k in ("sunset", "dawn", "dusk", "evening"))]
+if _clear and random.random() < 0.75:
+    hdri_name = _clear[(RUN*5 + 3) % len(_clear)]
+else:
+    hdri_name = HDRIS[(RUN*5 + 3) % len(HDRIS)]
 HDRI = os.path.join(HDRI_DIR, hdri_name)
 warm = any(k in hdri_name for k in ("sunset", "dawn", "dusk", "evening"))
 dome = UsdLux.DomeLight.Define(stage, "/PoC_Sky")
@@ -76,14 +81,15 @@ add_update_semantics(stage.GetPrimAtPath("/Drone"), "drone")
 UPX = -90.0 if up == 'Y' else 0.0
 
 # 카메라 고정(RUN별 1시점) — FOV도 RUN별 변주(#3), fx_px 기록(solvePnP)
-bg = "building" if RUN % 2 == 0 else "sky"
+bg = "building" if RUN % 4 == 0 else "sky"   # 진단: 벤치=맑은하늘. 3/4 sky(도시지배 제거)
 ang = RUN * 2.39996
 hfov = random.uniform(50, 68); thw = math.tan(math.radians(hfov)/2)
 FX_PX = (W/2)/thw   # solvePnP cameraMatrix: fx=fy=FX_PX, cx=W/2, cy=H/2
 ep = [0, 0, 0]; Rr = gd*0.85
-ep[g1] = c1+Rr*math.cos(ang); ep[g2] = c2+Rr*math.sin(ang); ep[ui] = max(ground, 0)+top*random.uniform(0.12, 0.28)
+ep[g1] = c1+Rr*math.cos(ang); ep[g2] = c2+Rr*math.sin(ang); ep[ui] = max(ground, 0)+top*random.uniform(0.15, 0.35)
 eye = Gf.Vec3d(*ep)
-Lp = [0, 0, 0]; Lp[g1] = c1; Lp[g2] = c2; Lp[ui] = top*(random.uniform(1.0, 1.4) if bg == "building" else random.uniform(1.7, 2.4))
+# sky: 훨씬 위로 봐서 프레임 대부분 깨끗한 하늘(벤치 매칭, 도시 화면밖). building: 도시+지평선 일부 유지.
+Lp = [0, 0, 0]; Lp[g1] = c1; Lp[g2] = c2; Lp[ui] = top*(random.uniform(1.0, 1.5) if bg == "building" else random.uniform(2.8, 5.0))
 cam = rep.create.camera(position=tuple(eye), look_at=tuple(Lp), focal_length=focal_of(hfov), horizontal_aperture=HAP, clipping_range=(0.05, 1e8))
 rp = rep.create.render_product(cam, (W, H))
 rgb_a = rep.AnnotatorRegistry.get_annotator("rgb")
@@ -231,14 +237,14 @@ for sq in range(N_SEQ):
     # 자세: 시퀀스마다 다양화(per-frame rop는 동결 트리거 → seq당 1회)
     pose_euler = (UPX+random.uniform(-25, 25), random.uniform(0, 360), random.uniform(-25, 25))
     rop.Set(Gf.Vec3f(*pose_euler))
-    # #4 tiny 우세 분포(실드론 대부분 이미지<5%). base_px≈gd*33/x(x=D/gd). pose는 근거리 일부에서만.
+    # 스케일분포(진단: 벤치=또렷한 중간드론. tiny만 말고 중간/근접 비중↑). base_px≈gd*33/x(x=D/gd).
     if bg == "building":
-        D = gd * (random.uniform(0.7, 2.0) if random.random() < 0.45 else random.uniform(0.18, 0.7))
-    else:                                    # sky: tiny 우세
+        D = gd * (random.uniform(0.7, 2.0) if random.random() < 0.4 else random.uniform(0.18, 0.7))
+    else:                                    # sky: 멀티스케일(tiny+중간+근접)
         r0 = random.random()
-        if r0 < 0.65:   D = gd * random.uniform(1.5, 7.0)    # 원거리 tiny (px≈5~22)
-        elif r0 < 0.85: D = gd * random.uniform(0.6, 1.5)    # 중거리
-        else:           D = gd * random.uniform(0.25, 0.6)   # 근거리(pose_valid용)
+        if r0 < 0.35:   D = gd * random.uniform(1.5, 7.0)    # 원거리 tiny (px≈5~22) — 원거리 deployment
+        elif r0 < 0.75: D = gd * random.uniform(0.3, 1.0)    # 중간 (px≈33~110) — 벤치 매칭
+        else:           D = gd * random.uniform(0.15, 0.35)  # 근접 (px≈94~220) — 또렷한 드론
     base_px = S_world*W/(2*D*thw); hw = D*thw; hh = hw*H/W
     o0 = (random.uniform(-0.35, 0.35)*hw, random.uniform(-0.30, 0.30)*hh)
     vel = (random.uniform(-0.07, 0.07)*hw, random.uniform(-0.06, 0.06)*hh)
