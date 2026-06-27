@@ -21,7 +21,7 @@ OUT = "/home/karma/OSMtoUSD/poc_city_render"
 DS = os.path.join(OUT, "dataset_v1")
 RUN = int(os.environ.get("RUN", "0"))
 W, H, HAP = 1280, 720, 36.0
-N_SEQ, SEQ_LEN, NEG_RATIO = 2, 8, 0.15
+N_SEQ, SEQ_LEN, NEG_RATIO = 8, 2, 0.15   # 다양성↑: 런당 distinct 셋업(거리·색·자세) 2→8개(4배), 같은 16프레임(freeze write수 동일)
 random.seed(100 + RUN*13)
 def focal_of(h): return (HAP/2)/math.tan(math.radians(h)/2)
 
@@ -264,10 +264,10 @@ for sq in range(N_SEQ):
     sil = random.uniform(0.12, 0.42)
     dtint = None                              # 드론 외형 DR — A3: 현실적 무채색(진단:실드론=흰/검정/회색, 랜덤색은 비현실적이라 A2서 깎임)
     if not backlit:
-        r = random.random()
-        if r < 0.45:   b = random.uniform(0.22, 0.5)    # 검정/진회색 (DJI 다수)
-        elif r < 0.7:  b = random.uniform(1.7, 3.3)     # 흰 (Phantom)
-        else:          b = random.uniform(0.6, 1.15)    # 중간 회색
+        cpick = random.random()                          # ⚠️카메라 basis r과 충돌 금지(전에 r= 썼다 크래시)
+        if cpick < 0.45:   b = random.uniform(0.22, 0.5)    # 검정/진회색 (DJI 다수)
+        elif cpick < 0.7:  b = random.uniform(1.7, 3.3)     # 흰 (Phantom)
+        else:              b = random.uniform(0.6, 1.15)    # 중간 회색
         tiny = random.uniform(0.96, 1.04)               # 미세 색온도만(컬러캐스트 X)
         dtint = np.array([b, b*tiny, b*random.uniform(0.96, 1.04)], np.float32)
     glare = random.random() < 0.28            # 태양 글레어/블룸(드론이 햇빛에 씻김 = 실제 최난도)
