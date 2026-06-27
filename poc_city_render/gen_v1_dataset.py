@@ -33,10 +33,17 @@ _lf = open(os.path.join(OUT, f"run_v1_{RUN}.log"), "w")
 def log(m): print(m, flush=True); _lf.write(str(m)+"\n"); _lf.flush()
 
 s = carb.settings.get_settings(); s.set("/rtx/rendermode", "RaytracedLighting")
+# 드론 기종 다양화(진단: 합성-only FN=다양 실드론. 우리 2종은 비대표적). 실드론 메쉬(PX4/gazebo, 풀메쉬 검증) 4종 추가.
 MODELS = {"quad": "/Isaac/Robots/Bitcraze/Crazyflie/cf2x.usd",
-          "heli": "/Isaac/Robots/NASA/Ingenuity/ingenuity.usd"}
-model_name = ["quad", "heli"][(RUN//2) % 2]
-MODEL_USD = get_assets_root_path() + MODELS[model_name]
+          "heli": "/Isaac/Robots/NASA/Ingenuity/ingenuity.usd",
+          "iris": "/home/karma/OSMtoUSD/assets/drones/iris_quad.usd",
+          "px4vision": "/home/karma/OSMtoUSD/assets/drones/px4vision_quad.usd",
+          "tailsitter": "/home/karma/OSMtoUSD/assets/drones/tailsitter_vtol.usd",
+          "techpod": "/home/karma/OSMtoUSD/assets/drones/techpod_plane.usd"}
+_mkeys = list(MODELS.keys())
+model_name = _mkeys[RUN % len(_mkeys)]                         # RUN별 6종 순환
+_mp = MODELS[model_name]
+MODEL_USD = _mp if _mp.startswith("/home") else get_assets_root_path() + _mp   # 로컬 USD vs Isaac 에셋서버
 
 omni.usd.get_context().open_stage(CITY)
 for _ in range(15): app.update()
