@@ -21,7 +21,7 @@ OUT = "/home/karma/OSMtoUSD/poc_city_render"
 DS = os.path.join(OUT, "dataset_v1")
 RUN = int(os.environ.get("RUN", "0"))
 W, H, HAP = 1280, 720, 36.0
-N_SEQ, SEQ_LEN, NEG_RATIO = 40, 2, 0.15   # 80프레임/런: Isaac재시작 분산(2.2배빠름). SEQ_LEN=2라 freeze우회(검증)
+N_SEQ, SEQ_LEN, NEG_RATIO = 80, 2, 0.15   # 160프레임/런(subframes5). freeze는 SEQ_LEN=2로 우회
 random.seed(100 + RUN*13)
 def focal_of(h): return (HAP/2)/math.tan(math.radians(h)/2)
 
@@ -45,18 +45,14 @@ model_name = _mkeys[RUN % len(_mkeys)]                         # RUN별 6종 순
 _mp = MODELS[model_name]
 MODEL_USD = _mp if _mp.startswith("/home") else get_assets_root_path() + _mp   # 로컬 USD vs Isaac 에셋서버
 
-omni.usd.get_context().open_stage(CITY)
-for _ in range(15): app.update()
+# ★도시 제거: 빈 스테이지 + HDRI 배경만 (2.2배 빠름 0.48→0.215초/프레임 + dvb 도메인매칭↑, 시부야는 안티드론 배경 아님)
+omni.usd.get_context().new_stage()
+for _ in range(10): app.update()
 stage = omni.usd.get_context().get_stage()
-up = UsdGeom.GetStageUpAxis(stage)
-ui = 1 if up == 'Y' else 2; g1, g2 = ([0, 2] if up == 'Y' else [0, 1])
-_wup = Gf.Vec3d(0, 1, 0) if up == 'Y' else Gf.Vec3d(0, 0, 1)
-
+UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
+up = 'Z'; ui = 2; g1, g2 = 0, 1; _wup = Gf.Vec3d(0, 0, 1)
 cache = UsdGeom.BBoxCache(Usd.TimeCode.Default(), [UsdGeom.Tokens.default_, UsdGeom.Tokens.render])
-tp = stage.GetDefaultPrim() or next(iter(stage.GetPseudoRoot().GetChildren()))
-rng = cache.ComputeWorldBound(tp).ComputeAlignedRange(); mn, mx = rng.GetMin(), rng.GetMax()
-c1 = (mn[g1]+mx[g1])/2; c2 = (mn[g2]+mx[g2])/2; top = mx[ui]; ground = mn[ui]
-gd = ((mx[g1]-mn[g1])**2+(mx[g2]-mn[g2])**2)**0.5
+c1 = 0.0; c2 = 0.0; top = 200.0; ground = 0.0; gd = 535.0   # 씬 스케일 하드코딩(시부야 기준 유지)
 
 # 배경/조명(#3): puresky HDRI가 배경+조명 모두 담당(별도 DistantLight 제거 → 이중태양 불일치 해소).
 # 표준 IBL: 돔 회전으로 태양 방위 변주, 강도만 랜덤. 지면없는 HDRI라 도시와 안 충돌.
@@ -301,8 +297,8 @@ for sq in range(N_SEQ):
         pf = (pose_euler[0]+12.0*math.sin(fr*0.5), pose_euler[1]+fr*5.0, pose_euler[2]+10.0*math.cos(fr*0.5))
         rop.Set(Gf.Vec3f(*pf))                                  # per-frame 회전(16스텝 동결임계 아래)
         dpos.Set(d3)
-        for _ in range(6): app.update()
-        rep.orchestrator.step(rt_subframes=14); app.update()
+        for _ in range(2): app.update()
+        rep.orchestrator.step(rt_subframes=5); app.update()
         bx, npx, sd, dids = parse(box_a.get_data(), seg_a.get_data())
         rgb = np.array(rgb_a.get_data()[:, :, :3])
         if not is_neg and dids:                                 # 드론 픽셀 외형 조정(라벨=지오메트리라 무관)
