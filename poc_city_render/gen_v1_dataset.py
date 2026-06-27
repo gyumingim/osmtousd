@@ -105,43 +105,61 @@ for a in (rgb_a, box_a, seg_a): a.attach([rp])
 f = (Gf.Vec3d(*Lp)-eye); f = f/f.GetLength(); r = Gf.Cross(f, _wup); r = r/r.GetLength(); u = Gf.Cross(r, f)
 log(f"RUN={RUN} model={model_name} bg={bg} gd={gd:.0f} hdri={hdri_name} hfov={hfov:.0f} warm={warm}")
 
-# --- 하드네거티브 디스트랙터 풀(새·비행기·풍선 모사) ---
-# drone semantic 안 붙임 → 자동 GT가 '드론 아님'으로 처리. 위치는 시퀀스당 1회만(동결안전).
-# 실제 안티드론 디스트랙터는 대부분 '작고 어두운 새 점'(드론과 닮아 헷갈림). 큰 흰 풍선은 비현실 → 제거.
-DSPEC = [
-    ("Sphere",  (0.60, 0.50, 0.55), (0.12, 0.11, 0.10), 0.50),  # 작은 어두운 새 점
-    ("Capsule", (0.30, 0.30, 1.30), (0.10, 0.10, 0.11), 0.50),  # 작은 검은 새(길쭉)
-    ("Cone",    (0.50, 0.50, 0.80), (0.14, 0.13, 0.12), 0.50),  # 새 실루엣
-    ("Sphere",  (0.55, 0.45, 0.50), (0.19, 0.16, 0.13), 0.55),  # 갈색 새
-    ("Capsule", (0.35, 0.35, 1.90), (0.40, 0.42, 0.46), 0.90),  # 원거리 비행기(작고 회색)
-    ("Cube",    (1.70, 0.18, 0.45), (0.44, 0.46, 0.50), 0.80),  # 원거리 비행기 날개(작게)
-]
-DBEHIND = Gf.Vec3d(eye[0]-f[0]*gd*9, eye[1]-f[1]*gd*9, eye[2]-f[2]*gd*9)  # 카메라 뒤(숨김)
-DPOOL = []
-for di, (shp, svec, col, sz) in enumerate(DSPEC):
-    pp = getattr(UsdGeom, shp).Define(stage, f"/Distractors/d{di}")
-    xf = UsdGeom.Xformable(pp); dtop = xf.AddTranslateOp()
-    K = S_world*0.5*sz
-    xf.AddScaleOp().Set(Gf.Vec3f(svec[0]*K, svec[1]*K, svec[2]*K))
-    xf.AddRotateXYZOp().Set(Gf.Vec3f(random.uniform(0, 360), random.uniform(0, 360), random.uniform(0, 360)))
-    pp.CreateDisplayColorAttr(Vt.Vec3fArray([Gf.Vec3f(*col)]))
-    dtop.Set(DBEHIND)
-    DPOOL.append(dtop)
+# --- 실제 메쉬 디스트랙터 (안티드론 혼동물, 웹검색기반: 새·비행기·풍선·나무·전선) ---
+# drone semantic 안 붙임 → 자동 GT '드론 아님'. 시퀀스당 1회 배치(동결안전).
+DIST_DIR = "/home/karma/OSMtoUSD/assets/distractors"
+DBEHIND = Gf.Vec3d(eye[0]-f[0]*gd*9, eye[1]-f[1]*gd*9, eye[2]-f[2]*gd*9)
+def dist_slot(usd, name):
+    p = UsdGeom.Xform.Define(stage, f"/Dist/{name}")
+    xf = UsdGeom.Xformable(p); ops = (xf.AddTranslateOp(), xf.AddScaleOp(), xf.AddRotateXYZOp())
+    p.GetPrim().GetReferences().AddReference(usd); ops[0].Set(DBEHIND)
+    return ops
+BIRD_SLOTS = [dist_slot(f"{DIST_DIR}/bird{(i % 3)+1}.usd", f"bird{i}") for i in range(4)]   # 새(최중요 혼동물)
+AIR_SLOTS = [dist_slot(f"{DIST_DIR}/airplane2.usd", "airp"), dist_slot(f"{DIST_DIR}/balloon.usd", "ballo")]
+TREE_SLOTS = [dist_slot(f"{DIST_DIR}/tree.usd", f"tree{i}") for i in range(2)]
+WIRE_SLOTS = []
+for i in range(3):                                   # 전선(절차적 가는 실린더)
+    p = UsdGeom.Cylinder.Define(stage, f"/Dist/wire{i}"); p.CreateRadiusAttr(1.0); p.CreateHeightAttr(1.0); p.CreateAxisAttr("X")
+    xf = UsdGeom.Xformable(p); ops = (xf.AddTranslateOp(), xf.AddScaleOp(), xf.AddRotateXYZOp())
+    p.CreateDisplayColorAttr(Vt.Vec3fArray([Gf.Vec3f(0.07, 0.07, 0.08)])); ops[0].Set(DBEHIND)
+    WIRE_SLOTS.append(ops)
+ALL_SLOTS = BIRD_SLOTS + AIR_SLOTS + TREE_SLOTS + WIRE_SLOTS
+_rr = lambda: random.uniform(0, 360)
 
-def place_distractors(is_neg, D):
-    """시퀀스당 1회: 일부 디스트랙터를 시야 안에, 나머지는 카메라 뒤로. 드론라벨 영향 없음(semantic 없음)."""
-    n = random.choice([2, 3, 3, 4]) if is_neg else random.choice([0, 1, 1, 2, 2, 3])
-    idxs = set(random.sample(range(len(DPOOL)), min(n, len(DPOOL))))
-    for j, dtop in enumerate(DPOOL):
-        if j in idxs:
-            Dd = D*random.uniform(0.7, 2.0); hwd = Dd*thw; hhd = hwd*H/W
-            ox = random.uniform(-0.8, 0.8)*hwd; oy = random.uniform(-0.65, 0.65)*hhd
-            dtop.Set(Gf.Vec3d(eye[0]+f[0]*Dd+r[0]*ox+u[0]*oy,
-                              eye[1]+f[1]*Dd+r[1]*ox+u[1]*oy,
-                              eye[2]+f[2]*Dd+r[2]*ox+u[2]*oy))
-        else:
-            dtop.Set(DBEHIND)
-    return len(idxs)
+def _place(ops, sz, Dd, oxf, oyf, rot):
+    hwd = Dd*thw; hhd = hwd*H/W
+    ops[1].Set(Gf.Vec3f(sz, sz, sz)); ops[2].Set(Gf.Vec3f(*rot))
+    ops[0].Set(Gf.Vec3d(eye[0]+f[0]*Dd+r[0]*oxf*hwd+u[0]*oyf*hhd,
+                        eye[1]+f[1]*Dd+r[1]*oxf*hwd+u[1]*oyf*hhd,
+                        eye[2]+f[2]*Dd+r[2]*oxf*hwd+u[2]*oyf*hhd))
+
+def place_distractors(scenario, D):
+    """시나리오별 실제 메쉬 배치. clean/birds/aircraft/clutter/negative."""
+    for ops in ALL_SLOTS: ops[0].Set(DBEHIND)
+    n = 0
+    if scenario in ("birds", "negative"):            # 새 1~4마리(다양 크기·위치)
+        for ops in random.sample(BIRD_SLOTS, random.randint(1, 4)):
+            _place(ops, S_world*random.uniform(0.25, 0.75), D*random.uniform(0.6, 2.5),
+                   random.uniform(-0.85, 0.85), random.uniform(-0.7, 0.7), (_rr(), _rr(), _rr())); n += 1
+    if scenario in ("aircraft", "negative"):         # 원거리 비행기 + 풍선
+        for ops in AIR_SLOTS:
+            if random.random() < 0.75:
+                _place(ops, S_world*random.uniform(0.6, 1.8), D*random.uniform(1.5, 4.0),
+                       random.uniform(-0.8, 0.8), random.uniform(-0.4, 0.7), (_rr(), _rr(), _rr())); n += 1
+    if scenario == "clutter":                        # 나무(하단 근거리 가림) + 전선(가로지름)
+        for ops in TREE_SLOTS:
+            if random.random() < 0.7:
+                _place(ops, S_world*random.uniform(3, 9), D*random.uniform(0.22, 0.5),
+                       random.uniform(-0.95, 0.95), random.uniform(-1.0, -0.45), (0, _rr(), 0)); n += 1
+        for ops in WIRE_SLOTS:
+            if random.random() < 0.6:
+                Dd = D*random.uniform(0.4, 1.2)
+                ops[1].Set(Gf.Vec3f(Dd*thw*3.0, S_world*0.015, S_world*0.015))   # 가늘고 가로로 김(X축)
+                ops[2].Set(Gf.Vec3f(0, random.uniform(-12, 12), random.uniform(-8, 8)))
+                ops[0].Set(Gf.Vec3d(eye[0]+f[0]*Dd+u[0]*random.uniform(-0.2, 0.6)*Dd*thw*H/W,
+                                    eye[1]+f[1]*Dd+u[1]*random.uniform(-0.2, 0.6)*Dd*thw*H/W,
+                                    eye[2]+f[2]*Dd+u[2]*random.uniform(-0.2, 0.6)*Dd*thw*H/W)); n += 1
+    return n
 
 def project(P):
     """월드점 → 픽셀 [px,py,vis]. 카메라 고정 basis(f,r,u) 사용."""
@@ -237,24 +255,25 @@ def sensor_fx(img, sp, gnoise):
     return cv2.imdecode(enc, cv2.IMREAD_COLOR) if ok else o
 
 pos = 0; tot = 0
+SCENARIOS = ["clean", "birds", "aircraft", "clutter", "negative"]
 for sq in range(N_SEQ):
-    is_neg = random.random() < NEG_RATIO
+    # ★체계적 커버(랜덤X): 전역 시퀀스 인덱스로 scale_bin·시나리오 격자 순환 → 모든 조합 균등
+    gseq = RUN * N_SEQ + sq
+    scale_bin = gseq % 4                          # 0 tiny / 1 small / 2 med / 3 large
+    scenario = SCENARIOS[(gseq // 4) % 5]         # clean/birds/aircraft/clutter/negative 순환
+    is_neg = (scenario == "negative")             # negative=드론없이 혼동물만
     ftype = random.choice(["hover", "cruise", "maneuver"])
-    # 자세: 시퀀스마다 다양화(per-frame rop는 동결 트리거 → seq당 1회)
     pose_euler = (UPX+random.uniform(-25, 25), random.uniform(0, 360), random.uniform(-25, 25))
     rop.Set(Gf.Vec3f(*pose_euler))
-    # 스케일분포(진단: 벤치=또렷한 중간드론. tiny만 말고 중간/근접 비중↑). base_px≈gd*33/x(x=D/gd).
-    if bg == "building":
-        D = gd * (random.uniform(0.7, 2.0) if random.random() < 0.4 else random.uniform(0.18, 0.7))
-    else:                                    # sky: 멀티스케일(tiny+중간+근접)
-        r0 = random.random()
-        if r0 < 0.35:   D = gd * random.uniform(1.5, 7.0)    # 원거리 tiny (px≈5~22) — 원거리 deployment
-        elif r0 < 0.75: D = gd * random.uniform(0.3, 1.0)    # 중간 (px≈33~110) — 벤치 매칭
-        else:           D = gd * random.uniform(0.15, 0.35)  # 근접 (px≈94~220) — 또렷한 드론
+    # 스케일 = scale_bin 결정(bin 내 랜덤). base_px≈gd*33/x(x=D/gd)
+    if scale_bin == 0:   D = gd * random.uniform(1.5, 7.0)    # tiny <20px (원거리)
+    elif scale_bin == 1: D = gd * random.uniform(0.6, 1.5)    # small 20~50px
+    elif scale_bin == 2: D = gd * random.uniform(0.3, 0.6)    # medium 50~110px (벤치)
+    else:                D = gd * random.uniform(0.15, 0.3)   # large >120px (근접)
     base_px = S_world*W/(2*D*thw); hw = D*thw; hh = hw*H/W
     o0 = (random.uniform(-0.35, 0.35)*hw, random.uniform(-0.30, 0.30)*hh)
     vel = (random.uniform(-0.07, 0.07)*hw, random.uniform(-0.06, 0.06)*hh)
-    nd = place_distractors(is_neg, D)
+    nd = place_distractors(scenario, D)
     sp = sensor_params()
     backlit = random.random() < 0.30          # 역광/실루엣(안티드론 최난도): 밝은하늘 vs 노출부족 드론
     sil = random.uniform(0.12, 0.42)
