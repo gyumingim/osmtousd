@@ -262,12 +262,14 @@ for sq in range(N_SEQ):
     sp = sensor_params()
     backlit = random.random() < 0.30          # 역광/실루엣(안티드론 최난도): 밝은하늘 vs 노출부족 드론
     sil = random.uniform(0.12, 0.42)
-    dtint = None                              # 드론 외형 DR(색/밝기 리버리) — Tremblay: 관심객체 외형 랜덤화
-    if not backlit:                           # A2: 역광 아니면 항상 외형DR (flat gray 단조 해소)
-        b = random.uniform(0.3, 2.5)          # 검정DJI ~ 흰Phantom 넓은 밝기
-        cast = ([random.uniform(0.45, 1.55) for _ in range(3)] if random.random() < 0.35
-                else [random.uniform(0.92, 1.08) for _ in range(3)])  # 35% 강한 컬러캐스트(레이싱쿼드 등)
-        dtint = np.array([b*cast[0], b*cast[1], b*cast[2]], np.float32)
+    dtint = None                              # 드론 외형 DR — A3: 현실적 무채색(진단:실드론=흰/검정/회색, 랜덤색은 비현실적이라 A2서 깎임)
+    if not backlit:
+        r = random.random()
+        if r < 0.45:   b = random.uniform(0.22, 0.5)    # 검정/진회색 (DJI 다수)
+        elif r < 0.7:  b = random.uniform(1.7, 3.3)     # 흰 (Phantom)
+        else:          b = random.uniform(0.6, 1.15)    # 중간 회색
+        tiny = random.uniform(0.96, 1.04)               # 미세 색온도만(컬러캐스트 X)
+        dtint = np.array([b, b*tiny, b*random.uniform(0.96, 1.04)], np.float32)
     glare = random.random() < 0.28            # 태양 글레어/블룸(드론이 햇빛에 씻김 = 실제 최난도)
     glare_add = None
     if glare:
