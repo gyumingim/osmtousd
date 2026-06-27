@@ -39,9 +39,9 @@ open('cur_n.txt','w').write(str(n))"
   echo "STAGE $1 DONE" > $POC/vol_stage_$1.txt
 }
 
-gen_range 0 124;   stage 2000
-gen_range 125 312; stage 5000
-gen_range 313 624; stage 10000
+gen_range 0 24;    stage 2000
+gen_range 25 62;   stage 5000
+gen_range 63 124;  stage 10000
 
 $PY -c "
 import matplotlib;matplotlib.use('Agg');import matplotlib.pyplot as plt,csv

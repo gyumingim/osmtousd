@@ -21,7 +21,7 @@ OUT = "/home/karma/OSMtoUSD/poc_city_render"
 DS = os.path.join(OUT, "dataset_v1")
 RUN = int(os.environ.get("RUN", "0"))
 W, H, HAP = 1280, 720, 36.0
-N_SEQ, SEQ_LEN, NEG_RATIO = 8, 2, 0.15   # 다양성↑: 런당 distinct 셋업(거리·색·자세) 2→8개(4배), 같은 16프레임(freeze write수 동일)
+N_SEQ, SEQ_LEN, NEG_RATIO = 40, 2, 0.15   # 80프레임/런: Isaac재시작 분산(2.2배빠름). SEQ_LEN=2라 freeze우회(검증)
 random.seed(100 + RUN*13)
 def focal_of(h): return (HAP/2)/math.tan(math.radians(h)/2)
 
