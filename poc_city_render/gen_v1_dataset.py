@@ -92,10 +92,11 @@ ang = RUN * 2.39996
 hfov = random.uniform(50, 68); thw = math.tan(math.radians(hfov)/2)
 FX_PX = (W/2)/thw   # solvePnP cameraMatrix: fx=fy=FX_PX, cx=W/2, cy=H/2
 ep = [0, 0, 0]; Rr = gd*0.85
-ep[g1] = c1+Rr*math.cos(ang); ep[g2] = c2+Rr*math.sin(ang); ep[ui] = max(ground, 0)+top*random.uniform(0.15, 0.35)
+ep[g1] = c1+Rr*math.cos(ang); ep[g2] = c2+Rr*math.sin(ang); ep[ui] = max(ground, 0)+top*random.uniform(0.05, 0.55)  # 카메라 높이도 랜덤 넓게
 eye = Gf.Vec3d(*ep)
 # sky: 훨씬 위로 봐서 프레임 대부분 깨끗한 하늘(벤치 매칭, 도시 화면밖). building: 도시+지평선 일부 유지.
-Lp = [0, 0, 0]; Lp[g1] = c1; Lp[g2] = c2; Lp[ui] = top*(random.uniform(1.0, 1.5) if bg == "building" else random.uniform(1.7, 2.8))
+Lp = [0, 0, 0]; Lp[g1] = c1; Lp[g2] = c2
+Lp[ui] = ep[ui] + top*random.uniform(-0.5, 2.8)   # ★시선 랜덤(수평~위): 드론 높이 다양(낮게~높게), 카메라 레벨 포함
 cam = rep.create.camera(position=tuple(eye), look_at=tuple(Lp), focal_length=focal_of(hfov), horizontal_aperture=HAP, clipping_range=(0.05, 1e8))
 rp = rep.create.render_product(cam, (W, H))
 rgb_a = rep.AnnotatorRegistry.get_annotator("rgb")
@@ -273,7 +274,7 @@ for sq in range(N_SEQ):
     elif scale_bin == 2: D = gd * random.uniform(0.3, 0.6)    # medium 50~110px (벤치)
     else:                D = gd * random.uniform(0.15, 0.3)   # large >120px (근접)
     base_px = S_world*W/(2*D*thw); hw = D*thw; hh = hw*H/W
-    o0 = (random.uniform(-0.35, 0.35)*hw, random.uniform(-0.30, 0.30)*hh)
+    o0 = (random.uniform(-0.75, 0.75)*hw, random.uniform(-0.70, 0.70)*hh)   # 드론 화면내 위치 완전 랜덤(구석~중앙)
     vel = (random.uniform(-0.07, 0.07)*hw, random.uniform(-0.06, 0.06)*hh)
     nd = place_distractors(scenario, D)
     sp = sensor_params()
