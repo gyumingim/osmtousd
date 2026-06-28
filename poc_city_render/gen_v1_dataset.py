@@ -114,7 +114,9 @@ def dist_slot(usd, name):
     xf = UsdGeom.Xformable(p); ops = (xf.AddTranslateOp(), xf.AddScaleOp(), xf.AddRotateXYZOp())
     p.GetPrim().GetReferences().AddReference(usd); ops[0].Set(DBEHIND)
     return ops
-BIRD_SLOTS = [dist_slot(f"{DIST_DIR}/rbird{(i % 3)+1}.usd", f"bird{i}") for i in range(4)]   # 실사풍 새(objaverse, 최중요 혼동물)
+_BIRD_USDS = ["gull0", "gull1", "gull2", "goose0", "goose1", "goose2"]   # 사용자제공 갈매기·거위 (색3변형씩)
+random.shuffle(_BIRD_USDS)                                                # 런마다 다른 색조합
+BIRD_SLOTS = [dist_slot(f"{DIST_DIR}/{_BIRD_USDS[i % 6]}.usd", f"bird{i}") for i in range(5)]   # 최중요 혼동물
 AIR_SLOTS = [dist_slot(f"{DIST_DIR}/airplane2.usd", "airp"), dist_slot(f"{DIST_DIR}/balloon.usd", "ballo")]
 TREE_SLOTS = [dist_slot(f"{DIST_DIR}/rtree.usd", f"tree{i}") for i in range(2)]   # 실사풍 나무(objaverse)
 WIRE_SLOTS = []
