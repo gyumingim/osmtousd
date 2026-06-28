@@ -331,10 +331,7 @@ for sq in range(N_SEQ):
             rgb = np.clip(rgb.astype(np.float32) + glare_add, 0, 255).astype(np.uint8)
         fid = f"r{RUN}s{sq}f{fr}"
         cxy = ((bx[0]+bx[2])/2, (bx[1]+bx[3])/2) if (bx and not is_neg) else None
-        if cxy and prevc:
-            rgb, nb = motion_blur(rgb, sd, dids, cxy[0]-prevc[0], cxy[1]-prevc[1])
-            if nb: bx = nb
-        prevc = cxy
+        prevc = cxy   # ★모션블러(streak) 비활성: 실드론은 줄무늬 블러 없음. '흐림'은 sensor_fx 디포커스 blur가 담당
         rgb = sensor_fx(rgb, sp, random.uniform(1.0, 5.0))    # #2 센서효과(노이즈 줄임 — 벤치는 깔끔)
         Image.fromarray(rgb).save(os.path.join(DS, "images", fid+".png"))
         vel3 = [0.0, 0.0, 0.0] if prev is None else [d3[i]-prev[i] for i in range(3)]; prev = d3
