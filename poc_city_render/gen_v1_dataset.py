@@ -114,9 +114,9 @@ def dist_slot(usd, name):
     xf = UsdGeom.Xformable(p); ops = (xf.AddTranslateOp(), xf.AddScaleOp(), xf.AddRotateXYZOp())
     p.GetPrim().GetReferences().AddReference(usd); ops[0].Set(DBEHIND)
     return ops
-BIRD_SLOTS = [dist_slot(f"{DIST_DIR}/bird{(i % 3)+1}.usd", f"bird{i}") for i in range(4)]   # 새(최중요 혼동물)
+BIRD_SLOTS = [dist_slot(f"{DIST_DIR}/rbird{(i % 3)+1}.usd", f"bird{i}") for i in range(4)]   # 실사풍 새(objaverse, 최중요 혼동물)
 AIR_SLOTS = [dist_slot(f"{DIST_DIR}/airplane2.usd", "airp"), dist_slot(f"{DIST_DIR}/balloon.usd", "ballo")]
-TREE_SLOTS = [dist_slot(f"{DIST_DIR}/tree.usd", f"tree{i}") for i in range(2)]
+TREE_SLOTS = [dist_slot(f"{DIST_DIR}/rtree.usd", f"tree{i}") for i in range(2)]   # 실사풍 나무(objaverse)
 WIRE_SLOTS = []
 for i in range(3):                                   # 전선(절차적 가는 실린더)
     p = UsdGeom.Cylinder.Define(stage, f"/Dist/wire{i}"); p.CreateRadiusAttr(1.0); p.CreateHeightAttr(1.0); p.CreateAxisAttr("X")
@@ -139,7 +139,7 @@ def place_distractors(scenario, D):
     n = 0
     if scenario in ("birds", "negative"):            # 새 1~4마리(다양 크기·위치)
         for ops in random.sample(BIRD_SLOTS, random.randint(1, 4)):
-            _place(ops, S_world*random.uniform(0.25, 0.75), D*random.uniform(0.6, 2.5),
+            _place(ops, S_world*random.uniform(0.5, 1.5), D*random.uniform(0.5, 2.0),   # 드론과 비슷~더 큼(강한 혼동물)
                    random.uniform(-0.85, 0.85), random.uniform(-0.7, 0.7), (_rr(), _rr(), _rr())); n += 1
     if scenario in ("aircraft", "negative"):         # 원거리 비행기 + 풍선
         for ops in AIR_SLOTS:
