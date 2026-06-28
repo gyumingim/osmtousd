@@ -1,0 +1,4 @@
+=== 8HR result (yolo11l 1280 batch2) ===
+A(real-only N100): 0.4285
+synth-only(pretrain best): 0.091
+C(pretrain→FT N100): 0.5382
