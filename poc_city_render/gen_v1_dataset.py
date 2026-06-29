@@ -11,7 +11,7 @@ import os, math, json, random
 import numpy as np
 import cv2
 import carb
-from pxr import UsdGeom, UsdLux, Usd, Gf, Vt
+from pxr import UsdGeom, UsdLux, Usd, Gf, Vt, Sdf
 import omni.usd
 import omni.replicator.core as rep
 from isaacsim.storage.native import get_assets_root_path
@@ -37,13 +37,11 @@ def log(m): print(m, flush=True); _lf.write(str(m)+"\n"); _lf.flush()
 
 s = carb.settings.get_settings(); s.set("/rtx/rendermode", "RaytracedLighting")
 # 드론 기종 다양화(진단: 합성-only FN=다양 실드론. 우리 2종은 비대표적). 실드론 메쉬(PX4/gazebo, 풀메쉬 검증) 4종 추가.
-MODELS = {"quad": "/Isaac/Robots/Bitcraze/Crazyflie/cf2x.usd",
-          "heli": "/Isaac/Robots/NASA/Ingenuity/ingenuity.usd",
-          "iris": "/home/karma/OSMtoUSD/assets/drones/iris_quad.usd",
+# ★inline 작동하는 로컬 드론만(에셋서버 cf2x/ingenuity·techpod는 중첩참조라 inline 불가→freeze. 제외해도 더 대표적)
+MODELS = {"phantom": "/home/karma/OSMtoUSD/assets/drones/phantom.usd",      # 실 DJI Phantom
+          "iris": "/home/karma/OSMtoUSD/assets/drones/iris_quad.usd",       # 실쿼드
           "px4vision": "/home/karma/OSMtoUSD/assets/drones/px4vision_quad.usd",
-          "tailsitter": "/home/karma/OSMtoUSD/assets/drones/tailsitter_vtol.usd",
-          "techpod": "/home/karma/OSMtoUSD/assets/drones/techpod_plane.usd",
-          "phantom": "/home/karma/OSMtoUSD/assets/drones/phantom.usd"}   # ★실 DJI Phantom(115k, 사실적)
+          "tailsitter": "/home/karma/OSMtoUSD/assets/drones/tailsitter_vtol.usd"}  # VTOL
 _mkeys = list(MODELS.keys())
 model_name = _mkeys[RUN % len(_mkeys)]                         # RUN별 6종 순환
 _mp = MODELS[model_name]
@@ -77,7 +75,14 @@ UsdGeom.Xformable(dome.GetPrim()).AddRotateYOp().Set(random.uniform(0, 360))   #
 drone = UsdGeom.Xform.Define(stage, "/Drone"); dpos = UsdGeom.Xformable(drone).AddTranslateOp()
 rs = UsdGeom.Xform.Define(stage, "/Drone/rs"); rsx = UsdGeom.Xformable(rs); sop = rsx.AddScaleOp(); rop = rsx.AddRotateXYZOp()
 cen = UsdGeom.Xform.Define(stage, "/Drone/rs/centered"); cop = UsdGeom.Xformable(cen).AddTranslateOp()
-cen.GetPrim().GetReferences().AddReference(MODEL_USD)
+# ★참조 대신 inline 복사(사용자제안): 드론 geometry를 stage에 직접 박음 → 참조레이어 transform 전파끊김(freeze) 회피
+if os.environ.get("INLINE", "1") == "1":   # ★기본 ON: 참조 대신 inline=freeze 근본해결(한 세션 무한생성)
+    _src = Usd.Stage.Open(MODEL_USD); _flat = _src.Flatten()
+    _sdp = _src.GetDefaultPrim().GetPath() if _src.GetDefaultPrim() else next(iter(_src.GetPseudoRoot().GetChildren())).GetPath()
+    stage.DefinePrim("/Drone/rs/centered/geom", "Xform")
+    Sdf.CopySpec(_flat, _sdp, stage.GetRootLayer(), Sdf.Path("/Drone/rs/centered/geom"))
+else:
+    cen.GetPrim().GetReferences().AddReference(MODEL_USD)
 for _ in range(120): app.update()
 mb = cache.ComputeWorldBound(stage.GetPrimAtPath("/Drone/rs/centered")).ComputeAlignedRange()
 mmn, mmx = mb.GetMin(), mb.GetMax(); mc = [(mmn[i]+mmx[i])/2 for i in range(3)]; mext = max(mmx[i]-mmn[i] for i in range(3))
@@ -132,6 +137,21 @@ for _ctry in range(6):
     f, r, u = _basis(eye, Lp)
 log(f"  cam검증: {_ctry+1}회시도 밝기={_mb:.0f}")
 log(f"RUN={RUN} model={model_name} bg={bg} gd={gd:.0f} hdri={hdri_name} hfov={hfov:.0f} warm={warm}")
+
+def reposition_cam():   # ★시퀀스별 카메라 이동(inline 드론=컷오프없음 → 한 세션서 다양한 시점). 빌딩속이면 재배치
+    global eye, f, r, u
+    _laz = math.radians(random.uniform(0, 360)); _lp = math.radians(random.uniform(8, 42)); _ang = random.uniform(0, 360)
+    _e = [0, 0, 0]; _eye = eye; _f, _r, _u = f, r, u
+    for _t in range(6):
+        _Rr = gd*random.uniform(0.0, 0.30)
+        _e[g1] = c1+_Rr*math.cos(math.radians(_ang)); _e[g2] = c2+_Rr*math.sin(math.radians(_ang)); _e[ui] = max(ground, 0)+top*random.uniform(0.0, 0.12)
+        _eye = Gf.Vec3d(*_e)
+        _L = [0, 0, 0]; _L[g1] = _e[g1]+_Ld*math.cos(_lp)*math.cos(_laz); _L[g2] = _e[g2]+_Ld*math.cos(_lp)*math.sin(_laz); _L[ui] = _e[ui]+_Ld*math.sin(_lp)
+        _f, _r, _u = _basis(_eye, _L); _place_cam(_eye, _f, _r, _u)
+        rep.orchestrator.step(rt_subframes=3); app.update()
+        if float(np.asarray(rgb_a.get_data()[:, :, :3]).mean()) > 18: break
+        _ang += 47
+    eye, f, r, u = _eye, _f, _r, _u
 
 # --- 실제 메쉬 디스트랙터 (안티드론 혼동물, 웹검색기반: 새·비행기·풍선·나무·전선) ---
 # drone semantic 안 붙임 → 자동 GT '드론 아님'. 시퀀스당 1회 배치(동결안전).
@@ -261,6 +281,8 @@ SCENARIOS = ["clean", "birds", "birds", "negative"]   # 새만(사용자요청):
 import time as _time
 _T = {"render": 0.0, "data": 0.0, "fx": 0.0, "save": 0.0}   # ★측정용(임시)
 for sq in range(N_SEQ):
+    if os.environ.get("CAMSEQ", "1") == "1":   # ★시퀀스마다 카메라 새 시점(한 세션서 다양성)
+        reposition_cam()
     # ★체계적 커버(랜덤X): 전역 시퀀스 인덱스로 scale_bin·시나리오 격자 순환 → 모든 조합 균등
     gseq = RUN * N_SEQ + sq
     scale_bin = [0, 1, 2, 3, 1, 2, 3, 2][gseq % 8]   # #2: tiny 1/8로↓, near/medium 비중↑(먼것만 문제 해결)
