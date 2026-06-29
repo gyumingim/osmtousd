@@ -11,7 +11,6 @@ import os, math, json, random
 import numpy as np
 import cv2
 import carb
-from PIL import Image
 from pxr import UsdGeom, UsdLux, Usd, Gf, Vt
 import omni.usd
 import omni.replicator.core as rep
@@ -219,9 +218,9 @@ def sensor_fx(img, sp, gnoise):
     o[..., 0] += sp["rgb_shift"][0]; o[..., 1] += sp["rgb_shift"][1]; o[..., 2] += sp["rgb_shift"][2]
     if sp["haze"] > 0: o = o*(1-sp["haze"]) + sp["haze_col"]*sp["haze"]
     o = np.clip(o, 0, 255).astype(np.uint8)
-    # 6. JPEG 압축(최종 인코딩)
-    ok, enc = cv2.imencode(".jpg", o, [cv2.IMWRITE_JPEG_QUALITY, sp["jpegq"]])
-    return cv2.imdecode(enc, cv2.IMREAD_COLOR) if ok else o
+    # 6. JPEG 인코딩 → 바이트 직접 반환(디코딩 안 함=속도↑). RGB→BGR 스왑(cv2 JPEG는 BGR 가정 → 뷰어서 정상색)
+    ok, enc = cv2.imencode(".jpg", o[..., ::-1], [cv2.IMWRITE_JPEG_QUALITY, sp["jpegq"]])
+    return enc
 
 pos = 0; tot = 0
 SCENARIOS = ["clean", "birds", "birds", "negative"]   # 새만(사용자요청): birds 비중↑, negative=새만 드론없음
@@ -293,14 +292,13 @@ for sq in range(N_SEQ):
         cxy = ((bx[0]+bx[2])/2, (bx[1]+bx[3])/2) if (bx and not is_neg) else None
         prevc = cxy   # ★모션블러(streak) 비활성: 실드론은 줄무늬 블러 없음. '흐림'은 sensor_fx 디포커스 blur가 담당
         _t3 = _time.perf_counter()
-        rgb = sensor_fx(rgb, sp, random.uniform(1.0, 5.0))    # #2 센서효과(노이즈 줄임 — 벤치는 깔끔)
+        jpg = sensor_fx(rgb, sp, random.uniform(1.0, 5.0))    # #2 센서효과 → JPEG 바이트 반환
         _t4 = _time.perf_counter(); _T["fx"] += _t4 - _t3
-        cv2.imwrite(os.path.join(DS, "images", fid+".png"), rgb[..., ::-1],   # PIL→cv2(빠름)+RGB→BGR스왑
-                    [cv2.IMWRITE_PNG_COMPRESSION, 1])
+        jpg.tofile(os.path.join(DS, "images", fid+".jpg"))   # ★바이트 직접 write(.jpg, 재인코딩 없음). 실데이터도 jpg라 더 현실적
         _T["save"] += _time.perf_counter() - _t4
         vel3 = [0.0, 0.0, 0.0] if prev is None else [d3[i]-prev[i] for i in range(3)]; prev = d3
         dist_m = round((D/gd)*100.0, 1)   # 합성 거리 매핑: D=gd*0.13→13m … gd*5→500m
-        rec = {"frame": fr, "file": fid+".png", "model": ("none" if is_neg else model_name),
+        rec = {"frame": fr, "file": fid+".jpg", "model": ("none" if is_neg else model_name),
                "flight_state": ("none" if is_neg else ftype),
                "pose_euler": [round(p, 1) for p in pf],   # per-frame 자세(매프레임 변함, 동결버그 해결)
                "drone_pos3d": [round(d3[i], 2) for i in range(3)], "vel3d": [round(v, 2) for v in vel3]}

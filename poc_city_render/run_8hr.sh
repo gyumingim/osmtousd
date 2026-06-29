@@ -24,11 +24,11 @@ random.seed(0)
 shutil.rmtree("cycle2_data/synth",ignore_errors=True)
 os.makedirs("cycle2_data/synth/images");os.makedirs("cycle2_data/synth/labels")
 n=0
-for img in sorted(glob.glob("dataset_v1/images/*.png")):
-    lf="dataset_v1/labels/"+os.path.basename(img).replace(".png",".txt")
+for img in sorted(glob.glob("dataset_v1/images/*.jpg")):
+    lf="dataset_v1/labels/"+os.path.basename(img).replace(".jpg",".txt")
     if os.path.exists(lf) and os.path.getsize(lf)>0:
         bn=os.path.basename(img);shutil.copy(img,"cycle2_data/synth/images/"+bn)
-        shutil.copy(lf,"cycle2_data/synth/labels/"+bn.replace(".png",".txt"));n+=1
+        shutil.copy(lf,"cycle2_data/synth/labels/"+bn.replace(".jpg",".txt"));n+=1
 print("synth",n)
 DVB="benchmarks/dvb"
 def has1(l): return os.path.exists(l) and any(len(x.split())>=5 and int(float(x.split()[0]))==1 for x in open(l))

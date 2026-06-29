@@ -23,11 +23,11 @@ print('synth',n)"
 # 3) synth-only 재학습 (A2)
 YOLO=/home/karma/OSMtoUSD/drone_det/venv/bin/yolo
 RUNS=/home/karma/OSMtoUSD/poc_city_render/runs
-rm -rf $RUNS/so_a2
+rm -rf $RUNS/so_a3
 $YOLO detect train model=yolo11s.pt data=cycle2_data/d_synth_dvb.yaml imgsz=1280 batch=4 \
   epochs=120 patience=30 cache=False workers=4 device=0 seed=0 \
   mosaic=1.0 close_mosaic=15 mixup=0.15 copy_paste=0.3 hsv_h=0.02 hsv_s=0.8 hsv_v=0.5 \
   degrees=10 translate=0.15 scale=0.6 fliplr=0.5 erasing=0.4 \
-  project=$RUNS name=so_a2 exist_ok=True > so_a2.log 2>&1
-$PY -c "import csv;r=list(csv.DictReader(open('runs/so_a2/results.csv')));print(f'합성only A2(외형DR) -> dvb: mAP {max(float(x[\"metrics/mAP50(B)\"]) for x in r):.3f} (vs 6종 flat 0.245)')" > a2_result.txt 2>&1
-echo A2_DONE > a2_done.txt
+  project=$RUNS name=so_a3 exist_ok=True > so_a3.log 2>&1
+$PY -c "import csv;r=list(csv.DictReader(open('runs/so_a3/results.csv')));print(f'합성only A3(현실색) -> dvb: mAP {max(float(x[\"metrics/mAP50(B)\"]) for x in r):.3f} (vs 6종 flat 0.245)')" > a3_result.txt 2>&1
+echo A2_DONE > a3_done.txt

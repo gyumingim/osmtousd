@@ -23,11 +23,11 @@ import glob,os,shutil
 shutil.rmtree('cycle2_data/synth',ignore_errors=True)
 os.makedirs('cycle2_data/synth/images');os.makedirs('cycle2_data/synth/labels')
 n=0
-for img in sorted(glob.glob('dataset_v1/images/*.png')):
-    lf='dataset_v1/labels/'+os.path.basename(img).replace('.png','.txt')
+for img in sorted(glob.glob('dataset_v1/images/*.jpg')):
+    lf='dataset_v1/labels/'+os.path.basename(img).replace('.jpg','.txt')
     if os.path.exists(lf) and os.path.getsize(lf)>0:
         bn=os.path.basename(img);shutil.copy(img,'cycle2_data/synth/images/'+bn)
-        shutil.copy(lf,'cycle2_data/synth/labels/'+bn.replace('.png','.txt'));n+=1
+        shutil.copy(lf,'cycle2_data/synth/labels/'+bn.replace('.jpg','.txt'));n+=1
 open('cur_n.txt','w').write(str(n))"
   rm -rf $RUNS/so_vol_$1
   $YOLO detect train model=yolo11s.pt data=cycle2_data/d_synth_dvb.yaml imgsz=1280 batch=4 \

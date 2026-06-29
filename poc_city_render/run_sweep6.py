@@ -12,8 +12,8 @@ OUT = "cycle2_data"
 shutil.rmtree(f"{OUT}/synth", ignore_errors=True)
 os.makedirs(f"{OUT}/synth/images"); os.makedirs(f"{OUT}/synth/labels")
 ns = 0
-for img in sorted(glob.glob("dataset_v1/images/*.png")):
-    lf = "dataset_v1/labels/" + os.path.basename(img).replace(".png", ".txt")
+for img in sorted(glob.glob("dataset_v1/images/*.jpg")):
+    lf = "dataset_v1/labels/" + os.path.basename(img).replace(".jpg", ".txt")
     if os.path.exists(lf) and os.path.getsize(lf) > 0:
         bn = os.path.basename(img)
         shutil.copy(img, f"{OUT}/synth/images/{bn}")
