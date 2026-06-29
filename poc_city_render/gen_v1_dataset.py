@@ -212,10 +212,9 @@ def sensor_fx(img, sp, gnoise):
     if sp["blur_sig"] > 0: o = cv2.GaussianBlur(o, (0, 0), sp["blur_sig"])
     # 3. 노출(sensor): gamma
     o = 255.0 * np.power(np.clip(o, 0, 255)/255.0, sp["gamma"])
-    # 4. 노이즈(sensor): Poisson-Gaussian (signal-dependent + independent)
-    o = o + np.random.normal(0, gnoise, o.shape)                    # Gaussian(var~10-50→std 3-7)
-    pois = np.random.poisson(np.clip(o, 0, None)).astype(np.float32)
-    o = o + (pois - o) * 0.3                                        # signal-dependent
+    # 4. 노이즈(sensor): read(가우시안)+shot(신호의존). Poisson(λ)≈N(λ,√λ)라 가우시안근사(poisson~180ms→수ms, 시각동일)
+    std = np.sqrt(gnoise*gnoise + 0.09*np.maximum(o, 0.0)).astype(np.float32)  # 0.09=0.3²(원래 shot계수)
+    o = o + np.random.standard_normal(o.shape).astype(np.float32) * std
     # 5. 색이동(post): RGBShift
     o[..., 0] += sp["rgb_shift"][0]; o[..., 1] += sp["rgb_shift"][1]; o[..., 2] += sp["rgb_shift"][2]
     if sp["haze"] > 0: o = o*(1-sp["haze"]) + sp["haze_col"]*sp["haze"]
@@ -226,6 +225,8 @@ def sensor_fx(img, sp, gnoise):
 
 pos = 0; tot = 0
 SCENARIOS = ["clean", "birds", "birds", "negative"]   # 새만(사용자요청): birds 비중↑, negative=새만 드론없음
+import time as _time
+_T = {"render": 0.0, "data": 0.0, "fx": 0.0, "save": 0.0}   # ★측정용(임시)
 for sq in range(N_SEQ):
     # ★체계적 커버(랜덤X): 전역 시퀀스 인덱스로 scale_bin·시나리오 격자 순환 → 모든 조합 균등
     gseq = RUN * N_SEQ + sq
@@ -278,18 +279,25 @@ for sq in range(N_SEQ):
         pf = (pose_euler[0]+12.0*math.sin(fr*0.5), pose_euler[1]+fr*5.0, pose_euler[2]+10.0*math.cos(fr*0.5))
         rop.Set(Gf.Vec3f(*pf))                                  # per-frame 회전(16스텝 동결임계 아래)
         dpos.Set(d3)
+        _t0 = _time.perf_counter()
         for _ in range(2): app.update()
         rep.orchestrator.step(rt_subframes=5); app.update()
+        _t1 = _time.perf_counter(); _T["render"] += _t1 - _t0
         bx, npx = parse(box_a.get_data())
         rgb = np.array(rgb_a.get_data()[:, :, :3])
+        _t2 = _time.perf_counter(); _T["data"] += _t2 - _t1
         # ★dtint/backlit 픽셀조정 제거(seg 마스크 없앰=속도↑): 드론 색·외형은 실드론 메쉬 재질이 담당
         if glare_add is not None:                               # 태양 글레어(전역 가산)
             rgb = np.clip(rgb.astype(np.float32) + glare_add, 0, 255).astype(np.uint8)
         fid = f"r{RUN}s{sq}f{fr}"
         cxy = ((bx[0]+bx[2])/2, (bx[1]+bx[3])/2) if (bx and not is_neg) else None
         prevc = cxy   # ★모션블러(streak) 비활성: 실드론은 줄무늬 블러 없음. '흐림'은 sensor_fx 디포커스 blur가 담당
+        _t3 = _time.perf_counter()
         rgb = sensor_fx(rgb, sp, random.uniform(1.0, 5.0))    # #2 센서효과(노이즈 줄임 — 벤치는 깔끔)
-        Image.fromarray(rgb).save(os.path.join(DS, "images", fid+".png"))
+        _t4 = _time.perf_counter(); _T["fx"] += _t4 - _t3
+        cv2.imwrite(os.path.join(DS, "images", fid+".png"), rgb[..., ::-1],   # PIL→cv2(빠름)+RGB→BGR스왑
+                    [cv2.IMWRITE_PNG_COMPRESSION, 1])
+        _T["save"] += _time.perf_counter() - _t4
         vel3 = [0.0, 0.0, 0.0] if prev is None else [d3[i]-prev[i] for i in range(3)]; prev = d3
         dist_m = round((D/gd)*100.0, 1)   # 합성 거리 매핑: D=gd*0.13→13m … gd*5→500m
         rec = {"frame": fr, "file": fid+".png", "model": ("none" if is_neg else model_name),
@@ -313,4 +321,8 @@ for sq in range(N_SEQ):
     json.dump(seq, open(os.path.join(DS, "sequences", f"r{RUN}s{sq}.json"), "w"), indent=2)
     log(f"  seq{sq}: model={model_name} ftype={seq['flight_state']} neg={is_neg} dist≈{(D/gd)*100:.0f}m distractors={nd}")
 log(f"=== RUN {RUN} 완료: {tot}프레임 {pos}양성 ===")
+_n = max(tot, 1)
+log(f"★측정/프레임: render={_T['render']/_n*1000:.0f}ms data={_T['data']/_n*1000:.0f}ms "
+    f"fx={_T['fx']/_n*1000:.0f}ms save={_T['save']/_n*1000:.0f}ms "
+    f"| 합={(_T['render']+_T['data']+_T['fx']+_T['save'])/_n*1000:.0f}ms")
 app.close()
