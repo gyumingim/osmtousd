@@ -3,7 +3,9 @@ GT: 위치(2D박스) + 거리(distance_m) + 자세(keypoints=3D박스 8모서리
 기종 2종(쿼드 cf2x / 헬기 ingenuity) RUN별 교대. 모션블러(드론만) + 원거리 tiny + 네거티브 + 시계열.
 RUN당 16프레임(동결 임계 아래). run_v1_all.sh가 RUN 0~9 순차. RUN=0만 초기화."""
 from isaacsim import SimulationApp
-app = SimulationApp({"headless": True, "width": 1280, "height": 720})
+# 속도최적화(NVIDIA Performance Handbook): 헤드리스 뷰포트 끔 + CPU스레드 제한
+app = SimulationApp({"headless": True, "width": 1280, "height": 720,
+                     "disable_viewport_updates": True, "limit_cpu_threads": 8})
 
 import os, math, json, random
 import numpy as np
