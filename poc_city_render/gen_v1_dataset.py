@@ -96,8 +96,7 @@ cam = rep.create.camera(position=tuple(eye), look_at=tuple(Lp), focal_length=foc
 rp = rep.create.render_product(cam, (W, H))
 rgb_a = rep.AnnotatorRegistry.get_annotator("rgb")
 box_a = rep.AnnotatorRegistry.get_annotator("bounding_box_2d_tight")
-seg_a = rep.AnnotatorRegistry.get_annotator("semantic_segmentation", init_params={"colorize": False})
-for a in (rgb_a, box_a, seg_a): a.attach([rp])
+for a in (rgb_a, box_a): a.attach([rp])   # ★세그멘테이션 제거(별도 render pass=비쌈) → box annotator만으로 박스/가시성
 f = (Gf.Vec3d(*Lp)-eye); f = f/f.GetLength(); r = Gf.Cross(f, _wup); r = r/r.GetLength(); u = Gf.Cross(r, f)
 log(f"RUN={RUN} model={model_name} bg={bg} gd={gd:.0f} hdri={hdri_name} hfov={hfov:.0f} warm={warm}")
 
@@ -155,7 +154,7 @@ def keypoints_9():
     kp.append(project(M.Transform(Gf.Vec3d(0, 0, 0))))   # 중심
     return kp
 
-def parse(bb, seg):
+def parse(bb):
     recs = bb["data"]; id2 = bb["info"]["idToLabels"]
     def lab(sid):
         v = id2.get(sid, id2.get(str(sid), None)); return v.get("class", str(v)) if isinstance(v, dict) else str(v)
@@ -163,9 +162,8 @@ def parse(bb, seg):
     for rr in recs:
         if "drone" in lab(int(rr["semanticId"])).lower():
             bx = (int(rr["x_min"]), int(rr["y_min"]), int(rr["x_max"]), int(rr["y_max"])); break
-    sd = np.asarray(seg["data"]); s2 = seg["info"]["idToLabels"]
-    dids = [int(k) for k, v in s2.items() if "drone" in str(v).lower()]
-    return bx, int(np.isin(sd, dids).sum()), sd, dids
+    npx = (bx[2]-bx[0])*(bx[3]-bx[1]) if bx else 0   # 박스 픽셀면적(seg 대체 가시성지표)
+    return bx, npx
 
 def motion_blur(img, sd, dids, dx, dy):
     disp = math.hypot(dx, dy); mask = np.isin(sd, dids).astype(np.float32)
@@ -247,16 +245,8 @@ for sq in range(N_SEQ):
     vel = (random.uniform(-0.07, 0.07)*hw, random.uniform(-0.06, 0.06)*hh)
     nd = place_distractors(scenario, D)
     sp = sensor_params()
-    backlit = random.random() < 0.30          # 역광/실루엣(안티드론 최난도): 밝은하늘 vs 노출부족 드론
-    sil = random.uniform(0.12, 0.42)
-    dtint = None                              # 드론 외형 DR — A3: 현실적 무채색(진단:실드론=흰/검정/회색, 랜덤색은 비현실적이라 A2서 깎임)
-    if not backlit:
-        cpick = random.random()                          # ⚠️카메라 basis r과 충돌 금지(전에 r= 썼다 크래시)
-        if cpick < 0.45:   b = random.uniform(0.22, 0.5)    # 검정/진회색 (DJI 다수)
-        elif cpick < 0.7:  b = random.uniform(1.7, 3.3)     # 흰 (Phantom)
-        else:              b = random.uniform(0.6, 1.15)    # 중간 회색
-        tiny = random.uniform(0.96, 1.04)               # 미세 색온도만(컬러캐스트 X)
-        dtint = np.array([b, b*tiny, b*random.uniform(0.96, 1.04)], np.float32)
+    backlit = random.random() < 0.30          # 메타데이터(기록용). 역광 실루엣은 이제 HDRI 자연조명이 처리
+    # dtint/sil 제거: seg 마스크 없앰(속도↑). 드론 색·외형은 실드론 메쉬 재질이 담당
     glare = random.random() < 0.28            # 태양 글레어/블룸(드론이 햇빛에 씻김 = 실제 최난도)
     glare_add = None
     if glare:
@@ -290,15 +280,9 @@ for sq in range(N_SEQ):
         dpos.Set(d3)
         for _ in range(2): app.update()
         rep.orchestrator.step(rt_subframes=5); app.update()
-        bx, npx, sd, dids = parse(box_a.get_data(), seg_a.get_data())
+        bx, npx = parse(box_a.get_data())
         rgb = np.array(rgb_a.get_data()[:, :, :3])
-        if not is_neg and dids:                                 # 드론 픽셀 외형 조정(라벨=지오메트리라 무관)
-            dm = np.isin(sd, dids)
-            if dm.any():
-                if backlit:                                     # 역광: 노출부족 실루엣
-                    rgb[dm] = (rgb[dm].astype(np.float32)*sil).astype(np.uint8)
-                elif dtint is not None:                         # 외형 DR: 색/밝기 리버리
-                    rgb[dm] = np.clip(rgb[dm].astype(np.float32)*dtint, 0, 255).astype(np.uint8)
+        # ★dtint/backlit 픽셀조정 제거(seg 마스크 없앰=속도↑): 드론 색·외형은 실드론 메쉬 재질이 담당
         if glare_add is not None:                               # 태양 글레어(전역 가산)
             rgb = np.clip(rgb.astype(np.float32) + glare_add, 0, 255).astype(np.uint8)
         fid = f"r{RUN}s{sq}f{fr}"
