@@ -42,7 +42,8 @@ MODELS = {"quad": "/Isaac/Robots/Bitcraze/Crazyflie/cf2x.usd",
           "iris": "/home/karma/OSMtoUSD/assets/drones/iris_quad.usd",
           "px4vision": "/home/karma/OSMtoUSD/assets/drones/px4vision_quad.usd",
           "tailsitter": "/home/karma/OSMtoUSD/assets/drones/tailsitter_vtol.usd",
-          "techpod": "/home/karma/OSMtoUSD/assets/drones/techpod_plane.usd"}
+          "techpod": "/home/karma/OSMtoUSD/assets/drones/techpod_plane.usd",
+          "phantom": "/home/karma/OSMtoUSD/assets/drones/phantom.usd"}   # ★실 DJI Phantom(115k, 사실적)
 _mkeys = list(MODELS.keys())
 model_name = _mkeys[RUN % len(_mkeys)]                         # RUN별 6종 순환
 _mp = MODELS[model_name]
