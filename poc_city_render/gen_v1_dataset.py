@@ -69,28 +69,8 @@ hdri_name = HDRIS[RUN % len(HDRIS)]
 HDRI = os.path.join(HDRI_DIR, hdri_name)
 warm = any(k in hdri_name for k in ("sunset", "dawn", "dusk", "evening"))
 dome = UsdLux.DomeLight.Define(stage, "/PoC_Sky")
-dome.CreateIntensityAttr(float(os.environ.get("DOME_I", random.uniform(650, 1000)))); dome.CreateTextureFileAttr(HDRI)  # ★하늘 필라이트↑(그늘 안 검게)
-UsdGeom.Xformable(dome.GetPrim()).AddRotateYOp().Set(random.uniform(0, 360))
-# ★멀티 태양(메인 키 + 서브 필). 방위는 matrix로 직접 지정(회전op 순서 버그 회피 → 빛이 실제 씬 비춤)
-def _orient_light(_prim, _d):                       # local -Z(빛 진행)이 _d 향하게 정렬
-    _d = _d/_d.GetLength(); _z = -_d
-    _up = Gf.Vec3d(0, 1, 0) if abs(_d[1]) < 0.98 else Gf.Vec3d(1, 0, 0)
-    _x = Gf.Cross(_up, _z); _x = _x/_x.GetLength(); _y = Gf.Cross(_z, _x)
-    UsdGeom.Xformable(_prim).MakeMatrixXform().Set(Gf.Matrix4d(
-        _x[0], _x[1], _x[2], 0, _y[0], _y[1], _y[2], 0, _z[0], _z[1], _z[2], 0, 0, 0, 0, 1))
-def _sun_dir(_el, _az):                              # 고도el·방위az 태양 → 빛 진행방향(아래로)
-    _e = math.radians(_el); _a = math.radians(_az)
-    return Gf.Vec3d(-math.cos(_e)*math.cos(_a), -math.sin(_e), -math.cos(_e)*math.sin(_a))
-_SUN_I = float(os.environ.get("SUN_I", random.uniform(9000, 16000)))   # 방향성 태양(검증완료). SUN_I env로 조정
-_saz = random.uniform(0, 360); _sel = random.uniform(40, 70)
-sun = UsdLux.DistantLight.Define(stage, "/PoC_Sun")                   # 메인(키)
-sun.CreateIntensityAttr(_SUN_I); sun.CreateAngleAttr(0.53)
-sun.CreateColorAttr(Gf.Vec3f(1.0, 0.86, 0.66) if warm else Gf.Vec3f(1.0, 0.97, 0.92))
-_orient_light(sun.GetPrim(), _sun_dir(_sel, _saz))
-sun2 = UsdLux.DistantLight.Define(stage, "/PoC_Sun2")                 # 서브(필, 반대편 약하게 → 그늘 채움)
-sun2.CreateIntensityAttr(_SUN_I*0.35); sun2.CreateAngleAttr(10.0)
-sun2.CreateColorAttr(Gf.Vec3f(0.7, 0.8, 1.0))                         # 푸른 하늘 필
-_orient_light(sun2.GetPrim(), _sun_dir(_sel*0.5, _saz+150))
+dome.CreateIntensityAttr(float(os.environ.get("DOME_I", random.uniform(380, 700)))); dome.CreateTextureFileAttr(HDRI)  # ★순수 IBL, 밝기 다양(380~700, 사용자: 650선호). HDRI=태양+하늘 조명(보이는태양=비추는태양=방향 일치)
+UsdGeom.Xformable(dome.GetPrim()).AddRotateYOp().Set(random.uniform(0, 360))   # 돔 회전=태양 방위 변주(조명·배경 같이 돌아 일관)
 
 # 드론 참조 + 중심정렬/스케일
 drone = UsdGeom.Xform.Define(stage, "/Drone"); dpos = UsdGeom.Xformable(drone).AddTranslateOp()
