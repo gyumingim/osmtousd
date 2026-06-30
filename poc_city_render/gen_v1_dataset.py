@@ -40,10 +40,10 @@ s = carb.settings.get_settings(); s.set("/rtx/rendermode", "RaytracedLighting")
 # ★inline 작동하는 로컬 드론만(에셋서버 cf2x/ingenuity·techpod는 중첩참조라 inline 불가→freeze. 제외해도 더 대표적)
 MODELS = {"phantom": "/home/karma/OSMtoUSD/assets/drones/phantom.usd",      # 실 DJI Phantom
           "iris": "/home/karma/OSMtoUSD/assets/drones/iris_quad.usd",       # 실쿼드
-          "px4vision": "/home/karma/OSMtoUSD/assets/drones/px4vision_quad.usd",
-          "tailsitter": "/home/karma/OSMtoUSD/assets/drones/tailsitter_vtol.usd"}  # VTOL
+          "px4vision": "/home/karma/OSMtoUSD/assets/drones/px4vision_quad.usd"}  # 실쿼드
+# ★tailsitter 제거(사용자판단: 납작 평판형=드론 같지않음, dvb 멀티로터 도메인과 이질적). 멀티로터 3종만.
 _mkeys = list(MODELS.keys())
-model_name = _mkeys[RUN % len(_mkeys)]                         # RUN별 6종 순환
+model_name = _mkeys[RUN % len(_mkeys)]                         # RUN별 3종 순환
 _mp = MODELS[model_name]
 MODEL_USD = _mp if _mp.startswith("/home") else get_assets_root_path() + _mp   # 로컬 USD vs Isaac 에셋서버
 
@@ -160,7 +160,15 @@ DBEHIND = Gf.Vec3d(eye[0]-f[0]*gd*9, eye[1]-f[1]*gd*9, eye[2]-f[2]*gd*9)
 def dist_slot(usd, name):
     p = UsdGeom.Xform.Define(stage, f"/Dist/{name}")
     xf = UsdGeom.Xformable(p); ops = (xf.AddTranslateOp(), xf.AddScaleOp(), xf.AddRotateXYZOp())
-    p.GetPrim().GetReferences().AddReference(usd); ops[0].Set(DBEHIND)
+    # ★새도 inline 복사(드론과 동일): 참조면 긴 세션서 ~20시퀀스후 transform freeze → 새 위치고정. inline=계속 이동.
+    if os.environ.get("INLINE", "1") == "1":
+        _bs = Usd.Stage.Open(usd); _bf = _bs.Flatten()
+        _bsp = _bs.GetDefaultPrim().GetPath() if _bs.GetDefaultPrim() else next(iter(_bs.GetPseudoRoot().GetChildren())).GetPath()
+        stage.DefinePrim(f"/Dist/{name}/geom", "Xform")
+        Sdf.CopySpec(_bf, _bsp, stage.GetRootLayer(), Sdf.Path(f"/Dist/{name}/geom"))
+    else:
+        p.GetPrim().GetReferences().AddReference(usd)
+    ops[0].Set(DBEHIND)
     return ops
 _BIRD_USDS = ["gull0", "gull1", "gull2", "goose0", "goose1", "goose2"]   # 사용자제공 갈매기·거위 (색3변형씩)
 random.shuffle(_BIRD_USDS)                                                # 런마다 다른 색조합

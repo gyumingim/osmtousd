@@ -33,5 +33,32 @@ poc_city_render/*.log
 # *.usda
 # *.usdz
 
+# 가상환경 (절대 커밋 금지, 5.9GB)
+venv/
+*/venv/
+drone_det/venv/
+
+# 대용량 3D 에셋·아카이브 (원본 보유/다운로드 가능)
+*.rar
+*.fbx
+*.glb
+*.gltf
+*.obj
+*.usd
+*.usdc
+assets/env_airport/
+assets/env_forest/
+assets/env_island/
+assets/incoming/
+assets/nvidia_city_demo/
+assets/city_buildings/
+assets/shibuya/
+assets/shibuya_large/
+assets/explora_src/
+
+# 렌더 결과물 (재생성 가능)
+results/*.png
+poc_city_render/*_shots/
+
 # 캐시
 *.pkl

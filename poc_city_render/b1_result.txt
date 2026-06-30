@@ -1,0 +1,2 @@
+b1_comp: mAP 0.197
+b1_comp_synth: mAP 0.199

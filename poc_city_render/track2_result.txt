@@ -1,0 +1,6 @@
+합성only 6종 aug+1280 -> dvb: mAP 0.245 (vs 2종 0.211)
+PnP end-to-end 오차 (68 val 프레임):
+  (a) keypoint 검출 2D오차: 평균 89.93px 중앙 52.61px
+  (b) PnP 재투영오차:       평균 90.12px 중앙 52.70px
+  (c) 회전오차(pred vs GT): 평균 96.56deg 중앙 110.63deg
+SUMMARY kp=52.6px reproj=52.7px rot=110.6deg

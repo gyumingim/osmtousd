@@ -1,0 +1,1 @@
+합성only A2(외형DR) -> dvb: mAP 0.220 (vs 6종 flat 0.245)
